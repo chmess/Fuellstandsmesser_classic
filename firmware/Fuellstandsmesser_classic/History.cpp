@@ -775,3 +775,389 @@ bool historyIntegrityCheckAndRepair(){
     if(ord<minOrd)minOrd=ord;
     if(ord>maxOrd)maxOrd=ord;
     validRecords++;
+    if((li&0x1F)==0)yield();
+  }
+
+  Serial.print(F("[HISTORY REPAIR] Phase 1 fertig valid="));
+  Serial.print(validRecords);
+  Serial.print(F(" invalid="));
+  Serial.print(historyRepairInvalid);
+  Serial.print(F(" minOrd="));
+  Serial.print(minOrd);
+  Serial.print(F(" maxOrd="));
+  Serial.println(maxOrd);
+  yield();
+
+  if(validRecords==0 || minOrd>maxOrd){
+    src.close();
+    Serial.println(F("[HISTORY REPAIR] Keine gueltigen Records gefunden"));
+    return false;
+  }
+
+  const uint32_t slots=(uint32_t)(maxOrd-minOrd+1);
+  Serial.print(F("[HISTORY REPAIR] Index slots="));
+  Serial.println(slots);
+  yield();
+
+  if(slots>50000UL){
+    src.close();
+    Serial.print(F("[HISTORY REPAIR] Datumsbereich unplausibel slots="));
+    Serial.println(slots);
+    return false;
+  }
+
+  LittleFS.remove(HISTORY_REPAIR_INDEX_FILE);
+  File idx=LittleFS.open(HISTORY_REPAIR_INDEX_FILE,"w+");
+  if(!idx){
+    src.close();
+    Serial.println(F("[HISTORY REPAIR] Index-Datei konnte nicht erstellt werden"));
+    return false;
+  }
+
+  Serial.println(F("[HISTORY REPAIR] Phase 2 Index initialisieren"));
+  yield();
+
+  if(!historyRepairIndexCreate(idx,slots)){
+    src.close();idx.close();
+    LittleFS.remove(HISTORY_REPAIR_INDEX_FILE);
+    Serial.println(F("[HISTORY REPAIR] Index Initialisierung fehlgeschlagen"));
+    return false;
+  }
+
+  Serial.println(F("[HISTORY REPAIR] Phase 3 Tagesindex aufbauen"));
+  yield();
+
+  for(uint32_t li=0;li<historyHeader.count;li++){
+    const uint32_t physical=(oldestPhysical+li)%historyHeader.capacity;
+    DailyHistoryRecord r;
+    if(!historyReadRecordFromOpenFile(src,physical,r))continue;
+
+    const int32_t ord=historyDayOrdinal(r.dayKey);
+    if(ord<minOrd||ord>maxOrd)continue;
+
+    const uint32_t slot=(uint32_t)(ord-minOrd);
+    uint32_t previous=0xFFFFFFFFUL;
+
+    if(!historyRepairIndexRead(idx,slot,previous)){
+      src.close();idx.close();
+      LittleFS.remove(HISTORY_REPAIR_INDEX_FILE);
+      Serial.println(F("[HISTORY REPAIR] Index lesen fehlgeschlagen"));
+      return false;
+    }
+
+    if(previous!=0xFFFFFFFFUL)historyRepairDuplicates++;
+
+    if(!historyRepairIndexWrite(idx,slot,physical)){
+      src.close();idx.close();
+      LittleFS.remove(HISTORY_REPAIR_INDEX_FILE);
+      Serial.println(F("[HISTORY REPAIR] Index schreiben fehlgeschlagen"));
+      return false;
+    }
+
+    if((li&0x1F)==0)yield();
+  }
+  idx.flush();
+  yield();
+
+  Serial.print(F("[HISTORY REPAIR] Phase 3 fertig duplicates="));
+  Serial.println(historyRepairDuplicates);
+
+  const bool needsRepair=
+    historyRepairDuplicates>0 ||
+    historyRepairInvalid>0 ||
+    historyRepairOutOfOrder>0;
+
+  if(!needsRepair){
+    src.close();idx.close();
+    LittleFS.remove(HISTORY_REPAIR_INDEX_FILE);
+
+    Serial.print(F("[HISTORY REPAIR] OK records="));
+    Serial.print(historyHeader.count);
+    Serial.println(F(" duplicates=0 invalid=0 order=OK"));
+    return true;
+  }
+
+  Serial.print(F("[HISTORY REPAIR] Reparatur notwendig duplicates="));
+  Serial.print(historyRepairDuplicates);
+  Serial.print(F(" invalid="));
+  Serial.print(historyRepairInvalid);
+  Serial.print(F(" outOfOrder="));
+  Serial.println(historyRepairOutOfOrder);
+
+  Serial.println(F("[HISTORY REPAIR] Phase 4 kompakte Datei schreiben"));
+  yield();
+
+  LittleFS.remove(HISTORY_REPAIR_TMP_FILE);
+  File tmp=LittleFS.open(HISTORY_REPAIR_TMP_FILE,"w+");
+  if(!tmp){
+    src.close();idx.close();
+    LittleFS.remove(HISTORY_REPAIR_INDEX_FILE);
+    Serial.println(F("[HISTORY REPAIR] Temp-Datei konnte nicht erstellt werden"));
+    return false;
+  }
+
+  HistoryHeader newHeader=historyHeader;
+  newHeader.count=0;
+  newHeader.writeIndex=0;
+  newHeader.crc=historyHeaderCrc(newHeader);
+
+  if(tmp.write(reinterpret_cast<const uint8_t*>(&newHeader),sizeof(newHeader))!=sizeof(newHeader)){
+    src.close();idx.close();tmp.close();
+    LittleFS.remove(HISTORY_REPAIR_INDEX_FILE);
+    LittleFS.remove(HISTORY_REPAIR_TMP_FILE);
+    Serial.println(F("[HISTORY REPAIR] Temp-Header schreiben fehlgeschlagen"));
+    return false;
+  }
+
+  uint32_t newCount=0;
+
+  for(uint32_t slot=0;slot<slots;slot++){
+    uint32_t physical=0xFFFFFFFFUL;
+    if(!historyRepairIndexRead(idx,slot,physical))continue;
+    if(physical==0xFFFFFFFFUL)continue;
+
+    DailyHistoryRecord r;
+    if(!historyReadRecordFromOpenFile(src,physical,r))continue;
+
+    const uint32_t offset=sizeof(HistoryHeader)+newCount*sizeof(DailyHistoryRecord);
+    if(!tmp.seek(offset,SeekSet))continue;
+
+    if(tmp.write(reinterpret_cast<const uint8_t*>(&r),sizeof(r))!=sizeof(r))continue;
+
+    newCount++;
+    if((newCount&0x1F)==0)yield();
+  }
+
+  newHeader.count=newCount;
+  newHeader.writeIndex=newCount%newHeader.capacity;
+  newHeader.crc=historyHeaderCrc(newHeader);
+
+  if(!tmp.seek(0,SeekSet) ||
+     tmp.write(reinterpret_cast<const uint8_t*>(&newHeader),sizeof(newHeader))!=sizeof(newHeader)){
+    src.close();idx.close();tmp.close();
+    LittleFS.remove(HISTORY_REPAIR_INDEX_FILE);
+    LittleFS.remove(HISTORY_REPAIR_TMP_FILE);
+    Serial.println(F("[HISTORY REPAIR] finaler Header fehlgeschlagen"));
+    return false;
+  }
+
+  tmp.flush();
+  src.close();
+  idx.close();
+  tmp.close();
+
+  Serial.println(F("[HISTORY REPAIR] Phase 5 Dateien tauschen"));
+  yield();
+
+  LittleFS.remove(HISTORY_REPAIR_BAK_FILE);
+
+  if(!LittleFS.rename(HISTORY_FILE,HISTORY_REPAIR_BAK_FILE)){
+    LittleFS.remove(HISTORY_REPAIR_INDEX_FILE);
+    LittleFS.remove(HISTORY_REPAIR_TMP_FILE);
+    Serial.println(F("[HISTORY REPAIR] Backup-Rename fehlgeschlagen"));
+    return false;
+  }
+
+  if(!LittleFS.rename(HISTORY_REPAIR_TMP_FILE,HISTORY_FILE)){
+    LittleFS.rename(HISTORY_REPAIR_BAK_FILE,HISTORY_FILE);
+    LittleFS.remove(HISTORY_REPAIR_INDEX_FILE);
+    LittleFS.remove(HISTORY_REPAIR_TMP_FILE);
+    Serial.println(F("[HISTORY REPAIR] Neue History konnte nicht aktiviert werden"));
+    return false;
+  }
+
+  LittleFS.remove(HISTORY_REPAIR_BAK_FILE);
+  LittleFS.remove(HISTORY_REPAIR_INDEX_FILE);
+
+  historyRepairRemoved=
+    historyHeader.count>newCount ? historyHeader.count-newCount : 0;
+
+  historyHeader=newHeader;
+  historyCurrentValid=false;
+  historyInvalidateStatsCache();
+  historyRepairPerformed=true;
+
+  Serial.print(F("[HISTORY REPAIR] Fertig alt="));
+  Serial.print(validRecords + historyRepairInvalid);
+  Serial.print(F(" neu="));
+  Serial.print(newCount);
+  Serial.print(F(" entfernt="));
+  Serial.println(historyRepairRemoved);
+
+  return true;
+}
+
+void historySetupAfterFilesystem(){
+  historyReady=false;historyCurrentValid=false;
+  if(!fsMounted||!LittleFS.info(fsInfoCache)){
+    Serial.println(F("[HISTORY] deaktiviert: LittleFS nicht verfuegbar"));
+    return;
+  }
+
+  uint32_t usable=fsInfoCache.totalBytes>HISTORY_RESERVE_BYTES
+    ?fsInfoCache.totalBytes-HISTORY_RESERVE_BYTES:0;
+  uint32_t capacity=usable>sizeof(HistoryHeader)
+    ?(usable-sizeof(HistoryHeader))/sizeof(DailyHistoryRecord):0;
+
+  if(capacity<365){
+    Serial.println(F("[HISTORY] deaktiviert: zu wenig LittleFS"));
+    return;
+  }
+
+  if(LittleFS.exists(HISTORY_FILE)){
+    File probe=LittleFS.open(HISTORY_FILE,"r");
+    if(probe){
+      HistoryHeader h{};
+      if(probe.read(reinterpret_cast<uint8_t*>(&h),sizeof(h))==sizeof(h) &&
+         h.magic==HISTORY_MAGIC &&
+         h.version==HISTORY_VERSION_V2 &&
+         h.recordSize==sizeof(DailyHistoryRecordV2)){
+        probe.close();
+        if(!historyMigrateV2ToV3(capacity)){
+          Serial.println(F("[HISTORY V3] Migration FEHLER - alte History bleibt erhalten"));
+          return;
+        }
+      }else{
+        probe.close();
+      }
+    }
+  }
+
+  memset(&historyHeader,0,sizeof(historyHeader));
+  bool valid=false;
+
+  if(LittleFS.exists(HISTORY_FILE)){
+    File f=LittleFS.open(HISTORY_FILE,"r");
+    if(f){
+      if(f.read(reinterpret_cast<uint8_t*>(&historyHeader),sizeof(historyHeader))==sizeof(historyHeader)){
+        valid=historyHeader.magic==HISTORY_MAGIC&&
+              historyHeader.version==HISTORY_VERSION&&
+              historyHeader.recordSize==sizeof(DailyHistoryRecord)&&
+              historyHeader.capacity>0&&
+              historyHeader.capacity<=capacity&&
+              historyHeader.count<=historyHeader.capacity&&
+              historyHeader.writeIndex<historyHeader.capacity&&
+              historyHeader.crc==historyHeaderCrc(historyHeader);
+      }
+      f.close();
+    }
+  }
+
+  if(!valid){
+    LittleFS.remove(HISTORY_FILE);
+    File f=LittleFS.open(HISTORY_FILE,"w+");
+    if(!f){Serial.println(F("[HISTORY] Datei anlegen FEHLER"));return;}
+    historyHeader.magic=HISTORY_MAGIC;
+    historyHeader.version=HISTORY_VERSION;
+    historyHeader.recordSize=sizeof(DailyHistoryRecord);
+    historyHeader.capacity=capacity;
+    historyHeader.count=0;
+    historyHeader.writeIndex=0;
+    historyHeader.crc=historyHeaderCrc(historyHeader);
+    bool ok=f.write(reinterpret_cast<const uint8_t*>(&historyHeader),sizeof(historyHeader))==sizeof(historyHeader);
+    f.flush();f.close();
+    if(!ok)return;
+    Serial.println(F("[HISTORY] neue History V3 mit Klima angelegt"));
+  }else{
+    Serial.println(F("[HISTORY] vorhandene History V3 geladen"));
+  }
+
+  historyReady=true;
+  Serial.println(F("[HISTORY] Fast-Read aktiviert: Datei bleibt pro Auswertung offen"));
+  Serial.println(F("[HISTORY] Duplicate-Day Guard aktiv"));
+  Serial.print(F("[HISTORY] version="));Serial.print(HISTORY_VERSION);
+  Serial.print(F(" record="));Serial.print(sizeof(DailyHistoryRecord));
+  Serial.print(F(" B capacity="));Serial.print(historyHeader.capacity);
+  Serial.print(F(" Tage (~"));Serial.print((float)historyHeader.capacity/365.25f,1);
+  Serial.print(F(" Jahre) count="));Serial.println(historyHeader.count);
+  Serial.println(F("[HISTORY] Klima: T avg/min/max + RH avg/min/max"));
+  Serial.println(F("[HISTORY] Integritaetscheck: manuell ueber Wartung"));
+}
+
+void historySetupTime(){
+  if(WiFi.status()!=WL_CONNECTED){Serial.println(F("[TIME] NTP wartet auf WLAN"));return;}
+  setenv("TZ","CET-1CEST,M3.5.0,M10.5.0/3",1);tzset();
+  configTime(0,0,"pool.ntp.org","time.nist.gov");
+  Serial.println(F("[TIME] NTP gestartet"));
+  uint32_t start=millis();
+  while(time(nullptr)<1700000000&&millis()-start<5000UL){delay(100);yield();}
+  uint32_t dayKey=0;
+  if(historyDateNow(dayKey)){
+    historyTimeValid=true;Serial.print(F("[TIME] Datum "));Serial.println(historyDateString(dayKey));
+    DailyHistoryRecord r;
+    int32_t p=historyFindDay(dayKey,&r);
+    if(p>=0){
+      historyResetCurrentFromRecord(r,(uint32_t)p);
+      Serial.print(F("[HISTORY] heutigen Datensatz fortgesetzt index="));
+      Serial.print(p);
+      Serial.print(F(" source="));
+      Serial.println(r.source);
+    }
+  }
+}
+
+void historyLoop(){
+  if(!historyReady)return;
+  if(!historyTimeValid&&WiFi.status()==WL_CONNECTED){
+    static uint32_t retry=0;
+    if(millis()-retry>=60000UL){retry=millis();uint32_t d=0;if(historyDateNow(d))historyTimeValid=true;}
+  }
+}
+
+uint32_t historyFirstDayForAnchor(uint32_t anchorDay,uint16_t days){
+  if(anchorDay==0 || days==0)return 0;
+  time_t t=historyDayKeyToTime(anchorDay);
+  if(t==(time_t)-1 || t<=0)return 0;
+  return historyDayKeyFromTime(t-(time_t)(days-1)*86400);
+}
+
+bool historyNewestRecordFromOpenFile(File& f,DailyHistoryRecord& out,uint32_t& logicalIndex){
+  if(historyHeader.count==0)return false;
+  const uint32_t oldest=historyOldestPhysicalIndex();
+
+  for(uint32_t back=0;back<historyHeader.count;back++){
+    const uint32_t li=historyHeader.count-1-back;
+    const uint32_t physical=(oldest+li)%historyHeader.capacity;
+    DailyHistoryRecord r;
+    if(historyReadRecordFromOpenFile(f,physical,r) && r.dayKey>0){
+      out=r;
+      logicalIndex=li;
+      return true;
+    }
+    if((back&0x3F)==0)yield();
+  }
+  return false;
+}
+
+
+uint32_t historyFirstDayForDays(uint16_t days){
+  if(days==0)return 0;
+
+  uint32_t anchorDay=0;
+  if(historyDateNow(anchorDay)){
+    return historyFirstDayForAnchor(anchorDay,days);
+  }
+
+  if(!historyReady || historyHeader.count==0)return 0;
+
+  File f=LittleFS.open(HISTORY_FILE,"r");
+  if(!f)return 0;
+
+  DailyHistoryRecord newest;
+  uint32_t newestLogical=0;
+  const bool ok=historyNewestRecordFromOpenFile(f,newest,newestLogical);
+  f.close();
+
+  if(!ok || newest.dayKey==0)return 0;
+
+  return historyFirstDayForAnchor(newest.dayKey,days);
+}
+
+bool historyChronologicalBoundsFromOpenFile(
+  File& f,
+  DailyHistoryRecord& oldestRecord,
+  uint32_t& oldestLogical,
+  DailyHistoryRecord& newestRecord,
+  uint32_t& newestLogical
+){
+  if(historyHeader.count==0)return false;
