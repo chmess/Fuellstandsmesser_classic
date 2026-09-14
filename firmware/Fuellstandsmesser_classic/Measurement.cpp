@@ -105,10 +105,11 @@ bool startupStabilizeDistance(float in,float& stableOut){
   startupMeasurementStable=true;
   stableOut=startupCandidateDistance;
 
-  Serial.print(F("[STARTUP FILTER] stabil bestaetigt "));
+  Serial.print(F(LTXT_LOG_STARTUP_STABLE));
   Serial.print(stableOut,1);
   Serial.println(F(" mm"));
 
+  // Initialize the main filter cleanly with the confirmed startup value.
   for(uint8_t i=0;i<AVG_COUNT;i++)avgBuf[i]=0;
   for(uint8_t i=0;i<MEDIAN_COUNT;i++)medBuf[i]=0;
   avgPos=avgUsed=0;
@@ -133,6 +134,8 @@ bool filterDistance(float in, float& out) {
     return false;
   }
 
+  // Large jump relative to the last accepted raw value:
+  // accept only after several similar new measurements.
   if (isfinite(lastAcceptedDistance) &&
       fabsf(in - lastAcceptedDistance) > (float)cfg.maxJumpMm) {
 
@@ -141,6 +144,7 @@ bool filterDistance(float in, float& out) {
       pendingJumpDistance = in;
       pendingJumpCount = 1;
     } else {
+      // laufenden Kandidaten leicht mitteln
       pendingJumpDistance =
         ((pendingJumpDistance * pendingJumpCount) + in) / (pendingJumpCount + 1);
       if (pendingJumpCount < 255) pendingJumpCount++;
@@ -159,10 +163,11 @@ bool filterDistance(float in, float& out) {
       return false;
     }
 
-    Serial.print(F("[FILTER] Neuer Pegel bestaetigt: "));
+    Serial.print(F(LTXT_LOG_FILTER_NEW_LEVEL));
     Serial.print(pendingJumpDistance, 1);
     Serial.println(F(" mm"));
 
+    // Discard the old filter contents so the new level takes effect immediately.
     for (uint8_t i = 0; i < AVG_COUNT; i++) avgBuf[i] = 0;
     for (uint8_t i = 0; i < MEDIAN_COUNT; i++) medBuf[i] = 0;
     avgPos = avgUsed = 0;
@@ -172,6 +177,7 @@ bool filterDistance(float in, float& out) {
     pendingJumpDistance = NAN;
     pendingJumpCount = 0;
   } else {
+    // normal value -> discard any pending jump candidate
     pendingJumpDistance = NAN;
     pendingJumpCount = 0;
   }
@@ -271,6 +277,9 @@ void performMeasurement() {
 
   float corrected = (float)((int32_t)d + (int32_t)cfg.sensorOffsetMm);
 
+  // Immediately after boot / sensor recovery, first require several similar raw values
+  // to confirm the reading. This prevents a single incorrect startup value from contaminating history,
+  // noch MQTT noch den Sprungfilter verunreinigen.
   float startupStable = NAN;
   if(!startupStabilizeDistance(corrected,startupStable)){
     return;
@@ -305,4 +314,3 @@ void performMeasurement() {
 
   historyOnMeasurement();
 }
-
