@@ -3507,3 +3507,87 @@ function drawMonthly(){
   const group=iw/12,bw=Math.max(2,Math.min(12,(group-4)/Math.max(1,yrs.length)));monthBars=[];
   ms.forEach((a,m)=>{
     (a||[]).forEach((v,yi)=>{
+      if(v==null)return;
+      const val=Number(v)||0,q=pl+m*group+2+yi*bw,bh=val/mx*ih,hh=(yi*67)%360;
+      x.fillStyle='hsl('+hh+' 65% 55%)';x.fillRect(q,pt+ih-bh,Math.max(1,bw-1),bh);
+      monthBars.push({x:q,w:Math.max(1,bw-1),top:pt+ih-bh,bottom:pt+ih,month:m,year:yrs[yi],value:val});
+    });
+    x.fillStyle='#aaa';x.font='10px Arial';x.fillText(mn[m],pl+m*group+2,h-8)
+  });
+)JS");
+  server.sendContent(R"JS(
+  let lg='';yrs.forEach((y,yi)=>{lg+='<span><i style="background:hsl('+((yi*67)%360)+' 65% 55%)"></i>'+y+'</span>'});$('monthlyLegend').innerHTML=lg;
+  let t='<tr><th>Monat</th>';yrs.forEach(y=>t+='<th>'+y+'</th>');t+='</tr>';
+  ms.forEach((a,m)=>{t+='<tr><td>'+mn[m]+'</td>';yrs.forEach((y,yi)=>{let v=a?a[yi]:null;t+='<td>'+(v==null?'–':Math.round(v)+' L')+'</td>'});t+='</tr>'});
+  $('monthlyTable').innerHTML=t
+}
+
+const monC=$('mc'),monTip=$('monthTip');
+function monthShowTip(e){
+  const r=monC.getBoundingClientRect(),mx=(e.touches?e.touches[0].clientX:e.clientX)-r.left,my=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  let b=monthBars.find(q=>mx>=q.x-2&&mx<=q.x+q.w+2&&my>=q.top-3&&my<=q.bottom+3);
+  if(!b){monTip.style.display='none';return}
+)JS");
+  server.sendContent(R"JS(
+  monTip.innerHTML='<b>'+mn[b.month]+' '+b.year+'</b><br>Verbrauch: '+Math.round(b.value)+' L';
+  monTip.style.display='block';monTip.style.left=Math.max(5,Math.min(monC.clientWidth-175,mx+10))+'px';monTip.style.top='8px'
+}
+monC.onmousemove=monthShowTip;monC.ontouchmove=monthShowTip;monC.onmouseleave=()=>monTip.style.display='none';monC.ontouchend=()=>monTip.style.display='none';
+
+async function loadMonthly(y){
+  monthYears=y;document.querySelectorAll('.monthYearsBtn').forEach(b=>b.classList.toggle('active',Number(b.dataset.y)===monthYears));
+  const st=$('monthlyStatus');st.textContent='Monatsvergleich wird geladen …';
+  try{
+    let r=await fetch('/api/monthly-comparison?years='+monthYears+'&x='+Date.now(),{cache:'no-store'});
+    let raw=await r.text();if(!r.ok)throw new Error('HTTP '+r.status);
+)JS");
+  server.sendContent(R"JS(
+    let j=JSON.parse(raw);if(j.ok===false)throw new Error(j.error||'API');
+    monthly=j;st.textContent='Vergleich '+(j.firstYear||'')+'–'+(j.currentYear||'');st.style.color='#65e572';drawMonthly()
+  }catch(e){monthly=null;st.textContent='Fehler: '+e.message;st.style.color='#ff6565'}
+}
+
+async function loadRefills(){
+  const b=$('recentRefills');
+  try{
+    let r=await fetch('/api/recent-refills?x='+Date.now(),{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    let j=await r.json(),a=j.items||[];
+    if(!a.length){b.innerHTML='<span class="muted">Keine bestätigten Nachfüllungen vorhanden.</span>';return}
+    let h='<table><tr><th>Datum</th><th>Menge</th><th>Danach</th></tr>';
+)JS");
+  server.sendContent(R"JS(
+    a.forEach(v=>{h+='<tr><td>'+v.date+'</td><td>+'+f(v.liters)+' L</td><td>'+f(v.percent)+' %</td></tr>'});h+='</table>';b.innerHTML=h
+  }catch(e){b.textContent='Nachfüllungen konnten nicht geladen werden.'}
+}
+
+document.querySelectorAll('.periodBtn').forEach(b=>b.onclick=()=>load(Number(b.dataset.d)));
+$('histShowTemp').onchange=e=>{showTemp=!!e.target.checked;draw()};
+$('histShowHum').onchange=e=>{showHum=!!e.target.checked;draw()};
+document.querySelectorAll('.monthYearsBtn').forEach(b=>b.onclick=()=>loadMonthly(Number(b.dataset.y)));
+updateHistoryClimateToggles();
+
+async function initHistoryPage(){
+  await load(365);
+  await loadMonthly(5);
+  await loadRefills();
+}
+initHistoryPage();
+addEventListener('resize',()=>{draw();drawMonthly()});
+})();
+</script>
+)JS");
+
+  webStreamEnd();
+
+  Serial.print(F("[WEB HISTORY PAGE] end heap="));
+  Serial.print(ESP.getFreeHeap());
+  Serial.print(F(" maxBlock="));
+  Serial.print(ESP.getMaxFreeBlockSize());
+  Serial.print(F(" delta="));
+  Serial.println((int32_t)ESP.getFreeHeap()-(int32_t)historyPageHeapBefore);
+}
+
+
+// -----------------------------------------------------------------------------
+// WIFI / AP
