@@ -1487,3 +1487,250 @@ void webMetricCardFloat(const __FlashStringHelper* title,float value,uint8_t dec
   server.sendContent(F("</b></div>"));
 }
 
+void webTableRow(const __FlashStringHelper* label,const String& value){
+  server.sendContent(F("<tr><td>"));
+  server.sendContent(label);
+  server.sendContent(F("</td><td>"));
+  webSendSafe(value);
+  server.sendContent(F("</td></tr>"));
+}
+
+void handleSystemStatusPage() {
+  const uint32_t heapBefore=ESP.getFreeHeap();
+  Serial.print(F("[WEB] /systemstatus heap before="));
+  Serial.println(heapBefore);
+
+  webStreamBegin(F("System"));
+  webStreamNav(3);
+
+  server.sendContent(F(
+    "<div class='card'><div class='topbar'><h1>System</h1><div class='links'>"
+    "<a class='btn' href='/storage'>Speicher</a>"
+    "<a class='btn' href='/update'>Web OTA</a>"
+    "<a class='btn' href='/api/status'>Status JSON</a>"
+    "<a class='btn' href='/api/health'>Health JSON</a>"
+    "</div></div><div class='grid'>"
+  ));
+
+  webMetricCard(F("Firmware"),String(FW_VERSION));
+  webMetricCard(F("Gerät"),String(F("ESP8266 D1 mini")));
+  webMetricCard(F("Uptime"),String(millis()/1000UL)+F(" s"));
+  webMetricCardFloat(F("Heap frei"),ESP.getFreeHeap()/1024.0f,1,F(" KB"));
+  webMetricCardFloat(F("Heap Minimum"),minFreeHeapSeen/1024.0f,1,F(" KB"));
+  webMetricCard(F("Reset"),String(resetReasonShort()));
+  webMetricCard(F("Flash"),String(ESP.getFlashChipRealSize()/1024.0f/1024.0f,1)+F(" MB"));
+  webMetricCard(F("Sketch"),String(ESP.getSketchSize()/1024.0f,1)+F(" KB"));
+  webMetricCard(F("Sketch frei / OTA"),String(ESP.getFreeSketchSpace()/1024.0f,1)+F(" KB"));
+
+  if(fsMounted&&LittleFS.info(fsInfoCache)){
+    webMetricCard(F("LittleFS"),
+      String(fsInfoCache.totalBytes/1024.0f,1)+F(" / ")+
+      String(fsInfoCache.usedBytes/1024.0f,1)+F(" KB"));
+  }else{
+    webMetricCardFloat(F("LittleFS Gesamt"),fsInfoCache.totalBytes/1024.0f,1,F(" KB"));
+    webMetricCardFloat(F("LittleFS Belegt"),fsInfoCache.usedBytes/1024.0f,1,F(" KB"));
+    webMetricCardFloat(F("LittleFS Frei"),(fsInfoCache.totalBytes>fsInfoCache.usedBytes?(fsInfoCache.totalBytes-fsInfoCache.usedBytes):0)/1024.0f,1,F(" KB"));
+  }
+
+  webMetricCard(F("WLAN"),
+    WiFi.status()==WL_CONNECTED?String(F("Verbunden")):String(F("Offline")));
+  webMetricCard(F("MQTT"),
+    mqttClient.connected()?String(F("Verbunden")):String(F("Offline")));
+  webMetricCard(F("ToF"),
+    String(sensorName(activeSensorType))+
+    (sensorOk?String(F(" / OK")):String(F(" / Fehler"))));
+  if(!cfg.ahtEnabled){
+    webMetricCard(F("AHT10"),String(F("deaktiviert")));
+  }else if(!ahtOk){
+    webMetricCard(F("AHT10"),String(F("nicht erkannt / "))+String(ahtStatusText()));
+    webMetricCard(F("AHT Diagnose"),
+      String(F("0x38 · Retry "))+String(AHT_RETRY_MS/1000UL)+F(" s · Probes ")+String(ahtProbeCount)+
+      F(" · Fehler ")+String(ahtErrorCount));
+  }else{
+    webMetricCard(F("AHT10"),String(F("OK @ 0x38")));
+    webMetricCard(F("Temperatur"),String(ahtTemperatureC,1)+F(" °C"));
+    webMetricCard(F("Luftfeuchte"),String(ahtHumidityPercent,1)+F(" %"));
+    webMetricCard(F("Taupunkt"),String(ahtDewPointC,1)+F(" °C"));
+    webMetricCard(F("Kondensationsreserve"),String(ahtCondensationReserveC,1)+F(" °C"));
+    webMetricCard(F("AHT Status"),String(ahtStatusText()));
+    webMetricCard(F("AHT Intervall"),String(cfg.ahtIntervalMs/1000UL)+F(" s"));
+    webMetricCard(F("AHT Temp Offset"),String(cfg.ahtTemperatureOffsetC,1)+F(" °C"));
+    webMetricCard(F("AHT RH Offset"),String(cfg.ahtHumidityOffsetPercent,1)+F(" %"));
+    webMetricCard(F("AHT Alter"),lastAhtValidMs?String((millis()-lastAhtValidMs)/1000UL)+F(" s"):String(F("--")));
+    webMetricCard(F("AHT Fehler"),String(ahtErrorCount));
+    webMetricCard(F("AHT Recoveries"),String(ahtRecoveryCount));
+  }
+  webMetricCardUInt(F("Historie"),historyHeader.count,F(" Tage"));
+  webMetricCardUInt(F("History Recordgröße"),sizeof(DailyHistoryRecord),F(" B/Tag"));
+  webMetricCardUInt(F("History Duplikate"),historyRepairDuplicates);
+  webMetricCardUInt(F("History CRC/invalid"),historyRepairInvalid);
+  webMetricCard(F("History repariert"),historyRepairPerformed?String(F("JA")):String(F("NEIN")));
+  webMetricCard(F("OTA"),String(F("Web OTA bereit")));
+  webMetricCardUInt(F("WLAN-Reconnects"),wifiReconnectCount);
+  webMetricCard(F("Messungen / Fehler"),
+    String(measurementCount)+F(" / ")+String(measurementErrors));
+  webMetricCard(F("History API"),
+    String(historyApiRequests)+F(" Aufrufe / ")+
+    String(historyApiErrors)+F(" Fehler"));
+  webMetricCard(F("History API zuletzt"),
+    String(historyApiLastItems)+F(" Punkte / ")+
+    String(historyApiLastMs)+F(" ms"));
+  webMetricCardUInt(F("Nachfüllschwelle"),HISTORY_REFILL_MIN_LITERS,F(" L"));
+  webMetricCardFloat(F("Max Block frei"),ESP.getMaxFreeBlockSize()/1024.0f,1,F(" KB"));
+  webMetricCardFloat(F("Max Block Minimum"),(lowestMaxBlockSeen?lowestMaxBlockSeen:ESP.getMaxFreeBlockSize())/1024.0f,1,F(" KB"));
+  webMetricCardUInt(F("Heap Fragmentierung"),ESP.getHeapFragmentation(),F(" %"));
+  webMetricCard(F("Fragmentierung Maximum"),
+    String(highestHeapFragSeen)+F(" %"));
+  webMetricCard(F("Web Requests"),String(webRequestCount));
+  webMetricCard(F("Low-Heap Events"),String(webLowHeapEvents));
+  webMetricCard(F("Web OTA Versuche"),String(webOtaAttempts));
+  webMetricCard(F("Web OTA OK / Fehler"),
+    String(webOtaSuccessCount)+F(" / ")+String(webOtaErrorCount));
+
+  webMetricCard(F("Display Auto"),
+    cfg.displayAutoRotate?String(F("AN")):String(F("AUS")));
+  webMetricCard(F("Display Intervall"),
+    String(cfg.displayPageSeconds)+F(" s"));
+  webMetricCard(F("Display invertiert"),
+    cfg.displayInvert?String(F("AN")):String(F("AUS")));
+  webMetricCard(F("Display Schrift"),
+    cfg.displayFontWeight==0?String(F("Normal")):
+    (cfg.displayFontWeight==1?String(F("Fett")):String(F("Extra-Fett"))));
+
+  server.sendContent(F("</div></div>"));
+  webStreamEnd();
+
+  const uint32_t heapAfter=ESP.getFreeHeap();
+  Serial.print(F("[WEB] /systemstatus heap after="));
+  Serial.print(heapAfter);
+  Serial.print(F(" delta="));
+  Serial.println((int32_t)heapAfter-(int32_t)heapBefore);
+}
+
+uint32_t storageRemoveKnownTempFile(const char* path){
+  if(!fsMounted || !path || !path[0] || !LittleFS.exists(path))return 0;
+
+  uint32_t size=0;
+  File f=LittleFS.open(path,"r");
+  if(f){
+    size=(uint32_t)f.size();
+    f.close();
+  }
+
+  if(LittleFS.remove(path)){
+    Serial.print(F("[STORAGE CLEAN] geloescht "));
+    Serial.print(path);
+    Serial.print(F(" "));
+    Serial.print(size);
+    Serial.println(F(" B"));
+    return size;
+  }
+
+  Serial.print(F("[STORAGE CLEAN] FEHLER "));
+  Serial.println(path);
+  return 0;
+}
+
+void handleStorageCleanupTemp(){
+  if(!fsMounted){
+    server.send(503,"text/plain; charset=utf-8","LittleFS nicht verfuegbar");
+    return;
+  }
+
+  static const char* disposableFiles[]={
+    HISTORY_IMPORT_PREVIEW_FILE,
+    HISTORY_IMPORT_INDEX_FILE,
+    HISTORY_REPAIR_INDEX_FILE,
+    HISTORY_REPAIR_TMP_FILE,
+    HISTORY_REPAIR_BAK_FILE,
+    HISTORY_FILTER_TMP_FILE,
+    HISTORY_FILTER_BAK_FILE,
+    HISTORY_COMPACT_TMP_FILE,
+    HISTORY_COMPACT_BAK_FILE,
+    HISTORY_V2_MIGRATE_TMP_FILE,
+    HISTORY_V2_MIGRATE_BAK_FILE
+  };
+
+  uint32_t reclaimed=0;
+  uint8_t removed=0;
+
+  Serial.println(F("[STORAGE CLEAN] Start"));
+
+  for(uint8_t i=0;i<sizeof(disposableFiles)/sizeof(disposableFiles[0]);i++){
+    const bool existed=LittleFS.exists(disposableFiles[i]);
+    const uint32_t freed=storageRemoveKnownTempFile(disposableFiles[i]);
+    if(existed && !LittleFS.exists(disposableFiles[i])){
+      removed++;
+      reclaimed+=freed;
+    }
+    yield();
+  }
+
+  if(LittleFS.info(fsInfoCache)){
+    Serial.print(F("[STORAGE CLEAN] fertig files="));
+    Serial.print(removed);
+    Serial.print(F(" reclaimed="));
+    Serial.print(reclaimed);
+    Serial.print(F(" B free="));
+    Serial.println(fsInfoCache.totalBytes>fsInfoCache.usedBytes
+      ?fsInfoCache.totalBytes-fsInfoCache.usedBytes:0);
+  }
+
+  String html;
+  html.reserve(480);
+  html+=F("<!doctype html><html><head><meta charset='utf-8'>"
+          "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+          "<title>Speicher aufgeräumt</title></head><body style='font-family:Arial;background:#111;color:#eee;padding:24px'>"
+          "<h1>LittleFS aufgeräumt</h1><p>Gelöschte Temp-/Backup-Dateien: <b>");
+  html+=String(removed);
+  html+=F("</b></p><p>Freigegeben: <b>");
+  html+=String(reclaimed/1024.0f,1);
+  html+=F(" KB</b></p><p><a style='color:#69a7ff' href='/storage'>Zurück zu Speicher</a></p></body></html>");
+  server.send(200,"text/html; charset=utf-8",html);
+}
+
+void handleStorageStatus() {
+  const uint32_t heapBefore=ESP.getFreeHeap();
+  Serial.print(F("[WEB] /storage heap before="));
+  Serial.println(heapBefore);
+
+  webStreamBegin(F("Speicher"));
+  webStreamNav(3);
+
+  server.sendContent(F(
+    "<div class='card'><div class='topbar'><h1>Speicher & Historienplanung</h1>"
+    "<div class='links'><a class='btn' href='/systemstatus'>System</a></div>"
+    "</div><table>"
+  ));
+
+  webTableRow(F("Flash real"),String(ESP.getFlashChipRealSize())+F(" B"));
+  webTableRow(F("Sketch"),String(ESP.getSketchSize())+F(" B"));
+  webTableRow(F("FreeSketchSpace"),String(ESP.getFreeSketchSpace())+F(" B"));
+  webTableRow(F("LittleFS"),
+    fsMounted?String(F("gemountet")):String(F("nicht verfügbar")));
+
+  uint32_t freeB=0;
+  if(fsMounted&&LittleFS.info(fsInfoCache)){
+    freeB=fsInfoCache.totalBytes>fsInfoCache.usedBytes
+      ?fsInfoCache.totalBytes-fsInfoCache.usedBytes:0;
+
+    webTableRow(F("LittleFS gesamt"),
+      String(fsInfoCache.totalBytes)+F(" B"));
+    webTableRow(F("LittleFS benutzt"),
+      String(fsInfoCache.usedBytes)+F(" B"));
+    webTableRow(F("LittleFS frei"),
+      String(freeB)+F(" B"));
+    webTableRow(F("History Record"),
+      String(sizeof(DailyHistoryRecord))+F(" B"));
+    webTableRow(F("History Einträge"),
+      String(historyHeader.count));
+    webTableRow(F("History Kapazität"),
+      String(historyHeader.capacity)+F(" Tage"));
+  }
+
+  server.sendContent(F("</table></div>"));
+
+  if(freeB>0){
+    server.sendContent(F(
+      "<div class='card'><h2>Mögliche Tageshistorie</h2><table>"
+    ));
