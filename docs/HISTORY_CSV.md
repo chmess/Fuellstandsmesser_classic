@@ -1,70 +1,35 @@
 # History & CSV
 
-## History V3
+## Deutsch
 
-Die Langzeithistorie liegt in LittleFS und verwendet aktuell **History V3**.
+Die Langzeithistorie liegt in LittleFS und verwendet **History V3**, aktuell 32 Byte pro Tag. Gespeichert werden u. a. Datum, Füllstand/Liter, Verbrauch, Nachfüllung, Quelle, Klima-Min/Max/Mittel, Samples und CRC.
 
-Recordgröße:
+Quellen: 0=gemessen, 1=importiert, 2=Testdaten.
 
-```text
-32 Byte / Tag
-```
-
-Gespeichert werden u. a.:
-
-- Datum
-- Füllstand / Liter
-- Mittel-/Min-/Max-Werte
-- Verbrauch
-- Nachfüllung
-- Datenquelle
-- Klima-Mittel/Min/Max
-- Klima-Samples
-- CRC
-
-## Datenquellen
-
-| Wert | Quelle |
-|---:|---|
-| 0 | gemessen |
-| 1 | importiert |
-| 2 | Testdaten |
-
-## CSV
-
-Kompatible Kernfelder:
-
+Kompatibler CSV-Kernheader:
 ```text
 Datum;Fuellstand_L;Fuellstand_%25;Verbrauch_L;Nachfuellung_L;Quelle
 ```
 
-Die Classic-Firmware kann zusätzliche Klimafelder verwenden.
+Dieser Header bleibt aus Kompatibilitätsgründen auch beim englischen Build stabil.
 
-## Importregeln
+Import akzeptiert u. a. `01.01.2026`, `1.1.26`, `1-1-26`. Zweistellige Jahre werden als 2000+YY interpretiert; zukünftige/zu alte Tage werden verworfen; bei doppelten Tagen gewinnt der letzte Datensatz; Vorschau vor Übernahme.
 
-Unterstützte Datumsformen sind unter anderem:
+Wartung: Duplicate-Day-Guard, Integritätsprüfung, Reparatur, Kompaktierung, Löschen von Test-/Importdaten und Testdatenerzeugung.
 
-- `01.01.2026`
-- `1.1.26`
-- `1-1-26`
+## English
 
-Regeln:
+Long-term history is stored in LittleFS using **History V3**, currently 32 bytes/day. Stored data includes date, level/liters, consumption, refill, source, climate min/max/average, sample count and CRC.
 
-- zweistellige Jahre → 2000 + YY
-- zukünftige Tage werden verworfen
-- ältere Datensätze außerhalb der kompatiblen Importgrenze werden verworfen
-- bei doppelten Tagen gewinnt der letzte Datensatz
-- importierte Werte dürfen vorhandene Tage überschreiben
-- Vorschau vor endgültiger Übernahme
+Sources: 0=measured, 1=imported, 2=test data.
 
-## Wartung
+Compatible CSV core header:
+```text
+Datum;Fuellstand_L;Fuellstand_%25;Verbrauch_L;Nachfuellung_L;Quelle
+```
 
-Die History-Seite und Wartungsfunktionen unterstützen:
+This header intentionally remains stable for compatibility even in the English build.
 
-- Duplicate-Day-Guard
-- Integritätsprüfung
-- Reparatur
-- Kompaktierung
-- Löschen von Testdaten
-- Löschen importierter Daten
-- Testdaten-Erzeugung
+Import accepts examples such as `01.01.2026`, `1.1.26`, `1-1-26`. Two-digit years become 2000+YY; future/too-old dates are rejected; for duplicate days the last record wins; preview is shown before applying.
+
+Maintenance: duplicate-day guard, integrity check, repair, compaction, removal of test/import data and test-data generation.
