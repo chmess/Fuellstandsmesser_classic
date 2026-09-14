@@ -398,3 +398,380 @@ bool historyReadRecordByPhysicalIndex(uint32_t idx, DailyHistoryRecord& r) {
 
 bool historyWriteRecordAt(uint32_t idx, DailyHistoryRecord& r, bool updateHeader) {
   if(!historyReady||idx>=historyHeader.capacity)return false;
+  r.crc16=historyRecordCrc(r);
+  File f=LittleFS.open(HISTORY_FILE,"r+");
+  if(!f){historyWriteErrors++;return false;}
+  bool ok=f.seek(historyRecordOffset(idx),SeekSet) &&
+          f.write(reinterpret_cast<const uint8_t*>(&r),sizeof(r))==sizeof(r);
+  if(ok&&updateHeader)ok=historyWriteHeader(f);
+  f.flush();f.close();
+  if(ok){
+    historyWriteCount++;
+    historyInvalidateStatsCache();
+  }else{
+    historyWriteErrors++;
+  }
+  return ok;
+}
+
+uint32_t historyOldestPhysicalIndex() {
+  if(historyHeader.count==0||historyHeader.count<historyHeader.capacity)return 0;
+  return historyHeader.writeIndex;
+}
+
+bool historyReadChronological(uint32_t i, DailyHistoryRecord& r) {
+  if(!historyReady||i>=historyHeader.count)return false;
+  uint32_t p=(historyOldestPhysicalIndex()+i)%historyHeader.capacity;
+  return historyReadRecordByPhysicalIndex(p,r);
+}
+
+int32_t historyFindDay(uint32_t dayKey, DailyHistoryRecord* out=nullptr) {
+  if (!historyReady || !dayKey) return -1;
+
+  File f = LittleFS.open(HISTORY_FILE, "r");
+  if (!f) return -1;
+
+  const uint32_t oldest = historyOldestPhysicalIndex();
+
+  for (uint32_t i=0; i<historyHeader.count; ++i) {
+    const uint32_t physical = (oldest + i) % historyHeader.capacity;
+    DailyHistoryRecord r;
+    if (!historyReadRecordFromOpenFile(f, physical, r)) continue;
+
+    if (r.dayKey == dayKey) {
+      if (out) *out = r;
+      f.close();
+      return (int32_t)physical;
+    }
+
+    if ((i & 0x7F) == 0) yield();
+  }
+
+  f.close();
+  return -1;
+}
+
+
+bool historyDaysAreAdjacent(uint32_t olderDayKey, uint32_t newerDayKey) {
+  if(!olderDayKey || !newerDayKey || olderDayKey>=newerDayKey) return false;
+  const time_t a=historyDayKeyToTime(olderDayKey);
+  const time_t b=historyDayKeyToTime(newerDayKey);
+  if(a<=0 || b<=0) return false;
+  const long diff=(long)(b-a);
+  return diff >= 20L*3600L && diff <= 28L*3600L;
+}
+
+bool historyFindPreviousDay(uint32_t dayKey, DailyHistoryRecord& prev) {
+  if(!historyReady || historyHeader.count==0) return false;
+
+  File f=LittleFS.open(HISTORY_FILE,"r");
+  if(!f) return false;
+
+  const uint32_t oldest=historyOldestPhysicalIndex();
+  bool found=false;
+  DailyHistoryRecord best={};
+
+  for(uint32_t i=0;i<historyHeader.count;i++){
+    const uint32_t physical=(oldest+i)%historyHeader.capacity;
+    DailyHistoryRecord r;
+    if(!historyReadRecordFromOpenFile(f,physical,r))continue;
+    if(r.dayKey>=dayKey)continue;
+    if(r.source==HISTORY_TEST)continue;
+
+    if(!found || r.dayKey>best.dayKey){
+      best=r;
+      found=true;
+    }
+
+    if((i&0x7F)==0)yield();
+  }
+
+  f.close();
+
+  if(!found || !historyDaysAreAdjacent(best.dayKey,dayKey)) return false;
+  prev=best;
+  return true;
+}
+
+void historyPrepareDayBaseline(uint32_t dayKey) {
+  historyDayBaselineValid=false;
+  historyDayBaselineLiters=0;
+  historyDayRefillConfirmed=false;
+  historyDayMaxRiseLiters=0;
+
+  DailyHistoryRecord prev;
+  if(historyFindPreviousDay(dayKey,prev)){
+    historyDayBaselineLiters=prev.levelLiters;
+    historyDayBaselineValid=true;
+
+    Serial.print(F("[HISTORY] Tagesstart aus Vortag "));
+    Serial.print(historyDateString(prev.dayKey));
+    Serial.print(F(" = "));
+    Serial.print(historyDayBaselineLiters);
+    Serial.println(F(" L"));
+  }else{
+    Serial.println(F("[HISTORY] Kein lueckenloser Vortag -> Tagesstart ab erster Messung"));
+  }
+}
+
+void historyResetCurrentFromRecord(const DailyHistoryRecord& r,uint32_t physicalIndex){
+  historyCurrent=r;
+  historyCurrentIndex=physicalIndex;
+  historyCurrentValid=true;
+  historyPercentSum=(uint64_t)r.avgPermille*(uint64_t)max((uint16_t)1,r.samples);
+
+  historyDayBaselineLiters=r.firstLiters;
+  historyDayBaselineValid=(r.flags&HISTORY_FLAG_PREV_DAY_BASELINE)!=0;
+  historyDayRefillConfirmed=r.refillLiters>=HISTORY_REFILL_MIN_LITERS;
+  historyDayMaxRiseLiters=r.refillLiters;
+}
+
+void historyStartNewDay(uint32_t dayKey,uint8_t source=HISTORY_MEASURED){
+  DailyHistoryRecord existingRecord;
+  int32_t existingIndex=historyFindDay(dayKey,&existingRecord);
+
+  if(existingIndex>=0){
+    historyResetCurrentFromRecord(existingRecord,(uint32_t)existingIndex);
+
+    Serial.print(F("[HISTORY] Tag bereits vorhanden "));
+    Serial.print(historyDateString(dayKey));
+    Serial.print(F(" -> fortgesetzt index="));
+    Serial.print(existingIndex);
+    Serial.print(F(" source="));
+    Serial.println(existingRecord.source);
+
+    return;
+  }
+
+  historyPrepareDayBaseline(dayKey);
+  memset(&historyCurrent,0,sizeof(historyCurrent));
+  historyClimateClear(historyCurrent);
+  historyCurrent.dayKey=dayKey;
+  historyCurrent.minPermille=1000;
+  historyCurrent.source=source;
+  if(historyDayBaselineValid){
+    historyCurrent.firstLiters=historyDayBaselineLiters;
+    historyCurrent.flags|=HISTORY_FLAG_PREV_DAY_BASELINE;
+  }
+  historyCurrentValid=true;
+  historyPercentSum=0;
+  historyCurrentIndex=historyHeader.writeIndex;
+
+  if(historyHeader.count<historyHeader.capacity)historyHeader.count++;
+  historyHeader.writeIndex=(historyHeader.writeIndex+1)%historyHeader.capacity;
+
+  Serial.print(F("[HISTORY] Neuer Tag "));
+  Serial.print(historyDateString(dayKey));
+  Serial.print(F(" index="));
+  Serial.println(historyCurrentIndex);
+}
+
+void historyRecalcConsumption(DailyHistoryRecord& r) {
+  if(r.source!=HISTORY_MEASURED)return;
+  if(r.firstLiters==0 && r.levelLiters==0)return;
+
+  const int32_t start=(int32_t)r.firstLiters;
+  const int32_t end=(int32_t)r.levelLiters;
+  const int32_t rise=end-start;
+
+  if(rise >= (int32_t)HISTORY_REFILL_MIN_LITERS){
+    const uint16_t candidate=(uint16_t)min((int32_t)65535,rise);
+    if(candidate>historyDayMaxRiseLiters)historyDayMaxRiseLiters=candidate;
+
+    if(!historyDayRefillConfirmed){
+      historyDayRefillConfirmed=true;
+      Serial.print(F("[HISTORY] Nachfuellung bestaetigt +"));
+      Serial.print(historyDayMaxRiseLiters);
+      Serial.println(F(" L"));
+    }
+  }
+
+  if(historyDayRefillConfirmed){
+    r.refillLiters=max(r.refillLiters,historyDayMaxRiseLiters);
+    const int32_t cons=start+(int32_t)r.refillLiters-end;
+    r.consumptionLiters=(uint16_t)constrain((int)max((int32_t)0,cons),0,65535);
+  }else{
+    r.refillLiters=0;
+    const int32_t cons=start-end;
+    r.consumptionLiters=(uint16_t)constrain((int)max((int32_t)0,cons),0,65535);
+  }
+}
+
+void historyPromoteCurrentTestDayToMeasured(){
+  if(!historyCurrentValid || historyCurrent.source!=HISTORY_TEST)return;
+
+  const uint32_t dayKey=historyCurrent.dayKey;
+  const uint32_t physicalIndex=historyCurrentIndex;
+
+  Serial.print(F("[HISTORY] Testtag -> reale Messung, Record wird neu aufgebaut: "));
+  Serial.println(historyDateString(dayKey));
+
+  historyPrepareDayBaseline(dayKey);
+
+  memset(&historyCurrent,0,sizeof(historyCurrent));
+  historyClimateClear(historyCurrent);
+  historyCurrent.dayKey=dayKey;
+  historyCurrent.minPermille=1000;
+  historyCurrent.source=HISTORY_MEASURED;
+  historyCurrentIndex=physicalIndex;
+  historyCurrentValid=true;
+  historyPercentSum=0;
+
+  if(historyDayBaselineValid){
+    historyCurrent.firstLiters=historyDayBaselineLiters;
+    historyCurrent.flags|=HISTORY_FLAG_PREV_DAY_BASELINE;
+  }
+}
+
+void historyAccumulateCurrent(){
+  if(!historyCurrentValid||!isfinite(tankPercent)||!isfinite(tankLiters))return;
+  uint16_t p=(uint16_t)constrain((int)lroundf(tankPercent*10.0f),0,1000);
+  uint16_t l=(uint16_t)constrain((int)lroundf(tankLiters),0,65535);
+  if(historyCurrent.samples==0){
+    if(!historyDayBaselineValid){
+      historyCurrent.firstLiters=l;
+      historyDayBaselineLiters=l;
+    }
+    historyCurrent.minPermille=p;
+    historyCurrent.maxPermille=p;
+  }
+  if(historyCurrent.samples<65535)historyCurrent.samples++;
+  historyPercentSum+=p;
+  historyCurrent.avgPermille=(uint16_t)(historyPercentSum/historyCurrent.samples);
+  historyCurrent.minPermille=min(historyCurrent.minPermille,p);
+  historyCurrent.maxPermille=max(historyCurrent.maxPermille,p);
+  historyCurrent.levelLiters=l;
+  historyCurrent.source=HISTORY_MEASURED;
+  historyClimateAccumulate(historyCurrent);
+  historyRecalcConsumption(historyCurrent);
+}
+
+void historyCheckpoint(bool force){
+  if(!historyReady||!historyCurrentValid||!historyCurrent.samples)return;
+  uint32_t nowMs=millis();
+  if(!force&&(uint32_t)(nowMs-historyLastCheckpointMs)<HISTORY_CHECKPOINT_MS)return;
+  bool ok=historyWriteRecordAt(historyCurrentIndex,historyCurrent,true);
+  historyLastCheckpointMs=nowMs;
+  Serial.print(F("[HISTORY] Checkpoint "));Serial.print(historyDateString(historyCurrent.dayKey));
+  Serial.print(F(" samples="));Serial.print(historyCurrent.samples);
+  Serial.println(ok?F(" OK"):F(" FEHLER"));
+}
+
+void historyOnMeasurement(){
+  if(!historyReady||!isfinite(tankPercent)||!isfinite(tankLiters))return;
+  uint32_t dayKey=0;
+  if(!historyDateNow(dayKey)){historyTimeValid=false;return;}
+  historyTimeValid=true;
+  if(!historyCurrentValid)historyStartNewDay(dayKey);
+  else if(historyCurrent.dayKey!=dayKey){historyCheckpoint(true);historyStartNewDay(dayKey);}
+
+  if(historyCurrentValid && historyCurrent.source==HISTORY_TEST){
+    historyPromoteCurrentTestDayToMeasured();
+  }
+
+  historyAccumulateCurrent();
+  historyCheckpoint(historyCurrent.samples==1);
+}
+
+
+bool historyRepairIndexCreate(File& idxFile,uint32_t slots){
+  if(!idxFile || slots==0)return false;
+  const uint32_t empty=0xFFFFFFFFUL;
+  for(uint32_t i=0;i<slots;i++){
+    if(idxFile.write(reinterpret_cast<const uint8_t*>(&empty),sizeof(empty))!=sizeof(empty))return false;
+    if((i&0x7F)==0)yield();
+  }
+  idxFile.flush();
+  return true;
+}
+
+bool historyRepairIndexWrite(File& idxFile,uint32_t slot,uint32_t physicalIndex){
+  if(!idxFile)return false;
+  const uint32_t offset=slot*sizeof(uint32_t);
+  if(!idxFile.seek(offset,SeekSet))return false;
+  return idxFile.write(reinterpret_cast<const uint8_t*>(&physicalIndex),sizeof(physicalIndex))==sizeof(physicalIndex);
+}
+
+bool historyRepairIndexRead(File& idxFile,uint32_t slot,uint32_t& physicalIndex){
+  physicalIndex=0xFFFFFFFFUL;
+  if(!idxFile)return false;
+  const uint32_t offset=slot*sizeof(uint32_t);
+  if(offset+sizeof(uint32_t)>idxFile.size())return true;
+  if(!idxFile.seek(offset,SeekSet))return false;
+  return idxFile.read(reinterpret_cast<uint8_t*>(&physicalIndex),sizeof(physicalIndex))==sizeof(physicalIndex);
+}
+
+// Fast-Import verwendet dasselbe kompakte Dateindex-Format wie der
+
+// Explicit C++ forward declarations replacing Arduino auto-prototypes.
+bool historyDateNow(uint32_t& dayKey);
+bool historyNewestRecordFromOpenFile(File& f, DailyHistoryRecord& r, uint32_t& logicalIndex);
+uint32_t historyFirstDayForAnchor(uint32_t anchorDay, uint16_t days);
+uint32_t historyOldestPhysicalIndex();
+bool historyReadRecordFromOpenFile(File& f, uint32_t physicalIndex, DailyHistoryRecord& r);
+void setupFilesystem();
+
+bool historyImportIndexCreate(File& idxFile,uint32_t slots){
+  return historyRepairIndexCreate(idxFile,slots);
+}
+
+bool historyImportIndexWrite(File& idxFile,uint32_t slot,uint32_t physicalIndex){
+  return historyRepairIndexWrite(idxFile,slot,physicalIndex);
+}
+
+bool historyImportIndexRead(File& idxFile,uint32_t slot,uint32_t& physicalIndex){
+  return historyRepairIndexRead(idxFile,slot,physicalIndex);
+}
+
+bool historyIntegrityCheckAndRepair(){
+  historyRepairDuplicates=0;
+  historyRepairInvalid=0;
+  historyRepairOutOfOrder=0;
+  historyRepairRemoved=0;
+  historyRepairPerformed=false;
+
+  if(!historyReady || historyHeader.count==0)return true;
+
+  Serial.print(F("[HISTORY REPAIR] Start count="));
+  Serial.println(historyHeader.count);
+  yield();
+
+  File src=LittleFS.open(HISTORY_FILE,"r");
+  if(!src){
+    Serial.println(F("[HISTORY REPAIR] History-Datei nicht lesbar"));
+    return false;
+  }
+
+  const uint32_t oldestPhysical=historyOldestPhysicalIndex();
+  Serial.print(F("[HISTORY REPAIR] Phase 1 scan oldest="));
+  Serial.println(oldestPhysical);
+  yield();
+
+  int32_t minOrd=INT32_MAX;
+  int32_t maxOrd=INT32_MIN;
+  int32_t prevOrd=INT32_MIN;
+  uint32_t validRecords=0;
+
+  for(uint32_t li=0;li<historyHeader.count;li++){
+    const uint32_t physical=(oldestPhysical+li)%historyHeader.capacity;
+    DailyHistoryRecord r;
+
+    if(!historyReadRecordFromOpenFile(src,physical,r)){
+      historyRepairInvalid++;
+      if((li&0x7F)==0)yield();
+      continue;
+    }
+
+    const int32_t ord=historyDayOrdinal(r.dayKey);
+    if(ord<0){
+      historyRepairInvalid++;
+      if((li&0x7F)==0)yield();
+      continue;
+    }
+
+    if(prevOrd!=INT32_MIN && ord<prevOrd)historyRepairOutOfOrder++;
+    prevOrd=ord;
+
+    if(ord<minOrd)minOrd=ord;
+    if(ord>maxOrd)maxOrd=ord;
+    validRecords++;
