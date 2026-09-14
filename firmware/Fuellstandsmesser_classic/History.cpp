@@ -1552,3 +1552,393 @@ void handleClimateHistoryApi(){
     }else{
       emitPending();
       pending=r;
+    }
+    if((off&0x7F)==0)yield();
+  }
+  emitPending();
+  f.close();
+
+  out+=F("],\"days\":");out+=String(climateDays);
+  out+=F(",\"itemsCount\":");out+=String(emitted);
+  out+=F("}");
+
+  server.sendContent(out);
+  server.sendContent("");
+  webFinishConnection();
+
+  Serial.print(F("[CLIMATE API] reqDays="));
+  Serial.print(days);
+  Serial.print(F(" climateDays="));
+  Serial.print(climateDays);
+  Serial.print(F(" step="));
+  Serial.print(step);
+  Serial.print(F(" items="));
+  Serial.println(emitted);
+}
+
+void handleMonthlyComparisonApi(){
+  uint8_t years=5;
+  if(server.hasArg("years")){
+    int y=server.arg("years").toInt();
+    if(y==3||y==5||y==10)years=(uint8_t)y;
+  }
+
+  time_t now=time(nullptr);
+  if(now<1700000000){
+    server.send(503,"application/json",
+      "{\"ok\":false,\"error\":\"time_not_ready\",\"years\":[],\"months\":[]}");
+    return;
+  }
+
+  struct tm nt;
+  localtime_r(&now,&nt);
+  const int currentYear=nt.tm_year+1900;
+  const int firstYear=currentYear-(int)years+1;
+
+  uint32_t sums[10][12] = {};
+  uint16_t counts[10][12] = {};
+  uint32_t duplicatesSkipped=0;
+  uint32_t uniqueDays=0;
+
+  if(historyReady && historyHeader.count){
+    File f=LittleFS.open(HISTORY_FILE,"r");
+    if(!f){
+      server.send(500,"application/json",
+        "{\"ok\":false,\"error\":\"history_file_open_failed\",\"years\":[],\"months\":[]}");
+      return;
+    }
+
+    DailyHistoryRecord pending{};
+    bool havePending=false;
+
+    auto addMonthlyRecord=[&](const DailyHistoryRecord& r)->void{
+      const int y=(int)(r.dayKey/10000UL);
+      const int m=(int)((r.dayKey/100UL)%100UL);
+
+      if(y<firstYear||y>currentYear||m<1||m>12)return;
+
+      const uint8_t yi=(uint8_t)(y-firstYear);
+      sums[yi][m-1]+=r.consumptionLiters;
+      counts[yi][m-1]++;
+      uniqueDays++;
+    };
+
+    for(uint32_t i=0;i<historyHeader.count;i++){
+      DailyHistoryRecord r;
+      if(!historyReadChronologicalFromOpenFile(f,i,r)){
+        if((i&0x7F)==0)yield();
+        continue;
+      }
+
+      if(!havePending){
+        pending=r;
+        havePending=true;
+      }else if(r.dayKey==pending.dayKey){
+        pending=r;
+        duplicatesSkipped++;
+      }else{
+        addMonthlyRecord(pending);
+        pending=r;
+      }
+
+      if((i&0x7F)==0)yield();
+    }
+
+    if(havePending)addMonthlyRecord(pending);
+    f.close();
+  }
+
+  webPrepareConnectionClose();
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200,"application/json; charset=utf-8","");
+
+  String out;
+  out.reserve(480);
+  out=F("{\"ok\":true,\"firstYear\":");
+  out+=String(firstYear);
+  out+=F(",\"currentYear\":");
+  out+=String(currentYear);
+  out+=F(",\"years\":[");
+
+  for(uint8_t yi=0;yi<years;yi++){
+    if(yi)out+=',';
+    out+=String(firstYear+yi);
+  }
+
+  out+=F("],\"months\":[");
+  for(uint8_t m=0;m<12;m++){
+    if(m)out+=',';
+    out+='[';
+
+    for(uint8_t yi=0;yi<years;yi++){
+      if(yi)out+=',';
+      if(counts[yi][m]==0)out+=F("null");
+      else out+=String(sums[yi][m]);
+    }
+
+    out+=']';
+
+    if(out.length()>400){
+      server.sendContent(out);
+      out="";
+      yield();
+    }
+  }
+
+  out+=F("]}");
+  server.sendContent(out);
+  server.sendContent("");
+  webFinishConnection();
+
+  Serial.print(F("[MONTHLY] Vergleich "));
+  Serial.print(years);
+  Serial.print(F(" Jahre "));
+  Serial.print(firstYear);
+  Serial.print('-');
+  Serial.print(currentYear);
+  Serial.print(F(" unique="));
+  Serial.print(uniqueDays);
+  Serial.print(F(" dupSkip="));
+  Serial.println(duplicatesSkipped);
+}
+
+void handleHistoryCsv(){
+  uint16_t days=3650;
+  if(server.hasArg("days")){
+    long d=server.arg("days").toInt();
+    if(d>0&&d<=3650)days=(uint16_t)d;
+  }
+
+  uint32_t first=historyFirstDayForDays(days),today=0;
+  if(!historyDateNow(today) && historyReady && historyHeader.count>0){
+    File af=LittleFS.open(HISTORY_FILE,"r");
+    if(af){
+      DailyHistoryRecord newest;
+      uint32_t newestLogical=0;
+      if(historyNewestRecordFromOpenFile(af,newest,newestLogical))today=newest.dayKey;
+      af.close();
+    }
+  }
+
+  webPrepareConnectionClose();
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.sendHeader("Content-Disposition","attachment; filename=fuellstand_history.csv");
+  server.send(200,"text/csv; charset=utf-8","");
+  server.sendContent(F("Datum;Fuellstand_L;Fuellstand_%25;Verbrauch_L;Nachfuellung_L;Quelle;Temp_Mittel_C;Temp_Min_C;Temp_Max_C;RH_Mittel_%25;RH_Min_%25;RH_Max_%25;Klima_Samples\r\n"));
+
+  File f=LittleFS.open(HISTORY_FILE,"r");
+  if(!f){server.sendContent("");return;}
+
+  DailyHistoryRecord pending{};
+  bool havePending=false;
+  uint32_t duplicatesSkipped=0,exported=0;
+
+  auto appendCsvRecord=[&](const DailyHistoryRecord& r)->void{
+    char line[192];
+    char tAvg[12]="",tMin[12]="",tMax[12]="";
+    char hAvg[8]="",hMin[8]="",hMax[8]="",samples[8]="";
+
+    if(r.climateSamples&&r.tempAvgHalfC!=255)dtostrf(historyDecodeTempHalfC(r.tempAvgHalfC),0,1,tAvg);
+    if(r.climateSamples&&r.tempMinHalfC!=255)dtostrf(historyDecodeTempHalfC(r.tempMinHalfC),0,1,tMin);
+    if(r.climateSamples&&r.tempMaxHalfC!=255)dtostrf(historyDecodeTempHalfC(r.tempMaxHalfC),0,1,tMax);
+    if(r.climateSamples&&r.humidityAvgPct!=255)snprintf(hAvg,sizeof(hAvg),"%u",(unsigned)r.humidityAvgPct);
+    if(r.climateSamples&&r.humidityMinPct!=255)snprintf(hMin,sizeof(hMin),"%u",(unsigned)r.humidityMinPct);
+    if(r.climateSamples&&r.humidityMaxPct!=255)snprintf(hMax,sizeof(hMax),"%u",(unsigned)r.humidityMaxPct);
+    if(r.climateSamples)snprintf(samples,sizeof(samples),"%u",(unsigned)r.climateSamples);
+
+    const uint32_t dk=r.dayKey;
+    const unsigned y=(unsigned)(dk/10000UL);
+    const unsigned m=(unsigned)((dk/100UL)%100UL);
+    const unsigned d=(unsigned)(dk%100UL);
+
+    const int n=snprintf(
+      line,sizeof(line),
+      "%02u.%02u.%04u;%u;%.1f;%u;%u;%u;%s;%s;%s;%s;%s;%s;%s\r\n",
+      d,m,y,
+      (unsigned)r.levelLiters,
+      (double)historyPercentForLiters(r.levelLiters),
+      (unsigned)r.consumptionLiters,
+      (unsigned)r.refillLiters,
+      (unsigned)r.source,
+      tAvg,tMin,tMax,hAvg,hMin,hMax,samples
+    );
+
+    if(n>0 && (size_t)n<sizeof(line))server.sendContent(line);
+    exported++;
+    yield();
+  };
+
+  for(uint32_t i=0;i<historyHeader.count;i++){
+    DailyHistoryRecord r;
+    if(!historyReadChronologicalFromOpenFile(f,i,r))continue;
+    if(first&&r.dayKey<first)continue;
+    if(today&&r.dayKey>today)continue;
+
+    if(!havePending){
+      pending=r;
+      havePending=true;
+    }else if(r.dayKey==pending.dayKey){
+      pending=r;
+      duplicatesSkipped++;
+    }else{
+      appendCsvRecord(pending);
+      pending=r;
+    }
+
+    if((i & 0x3F) == 0) yield();
+  }
+
+  if(havePending)appendCsvRecord(pending);
+
+  Serial.print(F("[HISTORY CSV] exported="));
+  Serial.print(exported);
+  Serial.print(F(" duplicatesSkipped="));
+  Serial.println(duplicatesSkipped);
+
+  f.close();
+  server.sendContent("");
+  webFinishConnection();
+}
+
+void handleRecentRefills(){
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200,"application/json","");
+
+  String j="{\"items\":[";
+  uint8_t n=0;
+  uint32_t lastDay=0;
+
+  File f=LittleFS.open(HISTORY_FILE,"r");
+  if(f){
+    for(int32_t i=(int32_t)historyHeader.count-1;i>=0&&n<5;i--){
+      DailyHistoryRecord r;
+      if(!historyReadChronologicalFromOpenFile(f,(uint32_t)i,r))continue;
+
+      if(r.dayKey==lastDay)continue;
+      lastDay=r.dayKey;
+
+      if(!r.refillLiters)continue;
+
+      if(n++)j+=',';
+      j+="{\"date\":\""+historyDateString(r.dayKey)+
+         "\",\"liters\":"+String(r.refillLiters)+
+         ",\"percent\":"+String(historyPercentForLiters(r.levelLiters),1)+"}";
+
+      if ((i & 0x3F) == 0) yield();
+    }
+    f.close();
+  }
+
+  j+="]}";
+  server.sendContent(j);
+  server.sendContent("");
+  webFinishConnection();
+}
+
+bool historyResetFile(){
+  if(!historyReady)return false;
+  historyInvalidateStatsCache();
+  LittleFS.remove(HISTORY_FILE);
+  historyReady=false;historyCurrentValid=false;
+  historySetupAfterFilesystem();
+  return historyReady;
+}
+
+int32_t historyDayOrdinal(uint32_t dayKey){
+  int32_t y=(int32_t)(dayKey/10000UL);
+  int32_t m=(int32_t)((dayKey/100UL)%100UL);
+  int32_t d=(int32_t)(dayKey%100UL);
+  if(y<1970||m<1||m>12||d<1||d>31)return -1;
+
+  if(m<=2){y--;m+=12;}
+  return 365*y + y/4 - y/100 + y/400 + (153*(m-3)+2)/5 + d - 1;
+}
+
+bool historyAppendExternal(uint32_t dayKey,uint16_t liters,uint16_t cons,uint16_t refill,uint8_t source){
+  int32_t existing=historyFindDay(dayKey);
+  DailyHistoryRecord r={};
+  historyClimateClear(r);
+  r.dayKey=dayKey;r.samples=1;r.levelLiters=liters;
+  uint16_t p=(uint16_t)constrain((int)lroundf(historyPercentForLiters(liters)*10.0f),0,1000);
+  r.avgPermille=r.minPermille=r.maxPermille=p;r.firstLiters=liters;
+  r.consumptionLiters=cons;r.refillLiters=refill;r.source=source<=HISTORY_TEST?source:HISTORY_IMPORTED;
+  if(existing>=0)return historyWriteRecordAt((uint32_t)existing,r,false);
+  uint32_t idx=historyHeader.writeIndex;
+  if(historyHeader.count<historyHeader.capacity)historyHeader.count++;
+  historyHeader.writeIndex=(historyHeader.writeIndex+1)%historyHeader.capacity;
+  return historyWriteRecordAt(idx,r,true);
+}
+
+bool historyGenerateFast(uint16_t days) {
+  if (!historyReady || days == 0) return false;
+  if (days > historyHeader.capacity) days = (uint16_t)min((uint32_t)65535, historyHeader.capacity);
+
+  time_t now = time(nullptr);
+  if (now < 1700000000) {
+    Serial.println(F("[HISTORY] Testdaten FEHLER: keine gueltige Uhrzeit"));
+    return false;
+  }
+
+  LittleFS.remove(HISTORY_FILE);
+
+  memset(&historyHeader, 0, sizeof(historyHeader));
+  historyHeader.magic = HISTORY_MAGIC;
+  historyHeader.version = HISTORY_VERSION;
+  historyHeader.recordSize = sizeof(DailyHistoryRecord);
+
+  if (!LittleFS.info(fsInfoCache)) {
+    Serial.println(F("[HISTORY] Testdaten FEHLER: LittleFS Info"));
+    return false;
+  }
+
+  uint32_t usable =
+    fsInfoCache.totalBytes > HISTORY_RESERVE_BYTES
+      ? fsInfoCache.totalBytes - HISTORY_RESERVE_BYTES
+      : 0;
+
+  historyHeader.capacity =
+    usable > sizeof(HistoryHeader)
+      ? (usable - sizeof(HistoryHeader)) / sizeof(DailyHistoryRecord)
+      : 0;
+
+  if (days > historyHeader.capacity) days = (uint16_t)historyHeader.capacity;
+
+  historyHeader.count = days;
+  historyHeader.writeIndex = days % historyHeader.capacity;
+  historyHeader.crc = historyHeaderCrc(historyHeader);
+
+  File f = LittleFS.open(HISTORY_FILE, "w+");
+  if (!f) {
+    Serial.println(F("[HISTORY] Testdaten FEHLER: Datei oeffnen"));
+    historyReady = false;
+    return false;
+  }
+
+  if (f.write(reinterpret_cast<const uint8_t*>(&historyHeader),
+              sizeof(historyHeader)) != sizeof(historyHeader)) {
+    f.close();
+    Serial.println(F("[HISTORY] Testdaten FEHLER: Header"));
+    historyReady = false;
+    return false;
+  }
+
+  struct tm tt;
+  localtime_r(&now, &tt);
+  tt.tm_hour = 12;
+  tt.tm_min = 0;
+  tt.tm_sec = 0;
+
+  const time_t end = mktime(&tt);
+  const time_t start = end - (time_t)(days - 1) * 86400;
+
+  float cap = max(100.0f, historyCapacityLiters());
+  float level = cap * 0.90f;
+  uint32_t refills = 0;
+
+  Serial.print(F("[HISTORY] Erzeuge Testdaten sequentiell: "));
+  Serial.print(days);
+  Serial.println(F(" Tage"));
+
+  for (uint16_t i = 0; i < days; ++i) {
+    const time_t ts = start + (time_t)i * 86400;
+    struct tm d;
