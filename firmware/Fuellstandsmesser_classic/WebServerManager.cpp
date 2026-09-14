@@ -988,3 +988,253 @@ void handleSave() {
   cfg.fullDistanceMm = server.arg("full").toFloat();
 
   long geometrySel = server.arg("geometry").toInt();
+  if (geometrySel < 0) geometrySel = 0;
+  if (geometrySel > 1) geometrySel = 1;
+  cfg.geometry = (uint8_t)geometrySel;
+  cfg.tankLengthMm = server.arg("length").toFloat();
+  cfg.tankWidthMm = server.arg("width").toFloat();
+  cfg.tankHeightMm = server.arg("height").toFloat();
+  cfg.diameterMm = server.arg("diameter").toFloat();
+
+  cfg.mqttEnabled = server.hasArg("mqtt");
+  copyArg("mhost", cfg.mqttHost, sizeof(cfg.mqttHost));
+
+  long mqttPort = server.arg("mport").toInt();
+  if (mqttPort < 1) mqttPort = 1;
+  if (mqttPort > 65535) mqttPort = 65535;
+  cfg.mqttPort = (uint16_t)mqttPort;
+
+  copyArg("muser", cfg.mqttUser, sizeof(cfg.mqttUser));
+  copyArg("mpass", cfg.mqttPass, sizeof(cfg.mqttPass));
+  copyArg("mbase", cfg.mqttBase, sizeof(cfg.mqttBase));
+  copyArg("mavg", cfg.mqttAverageTopic, sizeof(cfg.mqttAverageTopic));
+  copyArg("mheight", cfg.mqttFuellhoeheTopic, sizeof(cfg.mqttFuellhoeheTopic));
+
+
+  long intervalMs = server.arg("interval").toInt();
+  if (intervalMs < 500) intervalMs = 500;
+  cfg.measurementIntervalMs = (uint32_t)intervalMs;
+
+  long minD = server.arg("minD").toInt();
+  if (minD < 1) minD = 1;
+  if (minD > 65534) minD = 65534;
+  cfg.minDistanceMm = (uint16_t)minD;
+
+  long maxD = server.arg("maxD").toInt();
+  if (maxD < (long)cfg.minDistanceMm + 1L) {
+    maxD = (long)cfg.minDistanceMm + 1L;
+  }
+  if (maxD > 65535) maxD = 65535;
+  cfg.maxDistanceMm = (uint16_t)maxD;
+
+  long jump = server.arg("jump").toInt();
+  if (jump < 1) jump = 1;
+  if (jump > 65535) jump = 65535;
+  cfg.maxJumpMm = (uint16_t)jump;
+
+  long displayContrast = server.arg("displayContrast").toInt();
+  if (displayContrast < 20) displayContrast = 20;
+  if (displayContrast > 100) displayContrast = 100;
+  cfg.displayContrast = (uint8_t)displayContrast;
+
+  cfg.displayAutoRotate = server.hasArg("displayAutoRotate");
+  cfg.displayPageMask = 0;
+  if(server.hasArg("displayAutoPage0")) cfg.displayPageMask |= 0x01;
+  if(server.hasArg("displayAutoPage1")) cfg.displayPageMask |= 0x02;
+  if(server.hasArg("displayAutoPage2")) cfg.displayPageMask |= 0x04;
+  if(server.hasArg("displayAutoPage3")) cfg.displayPageMask |= 0x08;
+  if(server.hasArg("displayAutoPage4")) cfg.displayPageMask |= 0x10;
+  if(cfg.displayPageMask == 0) cfg.displayPageMask = 0x01;
+  long displayPageSeconds = server.arg("displayPageSeconds").toInt();
+  if (displayPageSeconds < 2) displayPageSeconds = 2;
+  if (displayPageSeconds > 60) displayPageSeconds = 60;
+  cfg.displayPageSeconds = (uint8_t)displayPageSeconds;
+  long displayFontWeight = server.arg("displayFontWeight").toInt();
+  if(displayFontWeight < 0) displayFontWeight = 0;
+  if(displayFontWeight > 2) displayFontWeight = 2;
+  cfg.displayFontWeight = (uint8_t)displayFontWeight;
+
+  cfg.displayInvert = server.hasArg("displayInvert");
+
+  validateConfig(true);
+
+  saveConfig();
+
+  server.send(
+    200,
+    "text/html; charset=utf-8",
+    F("<html><body><h1>Gespeichert</h1><p>Neustart...</p></body></html>")
+  );
+
+  delay(500);
+  ESP.restart();
+}
+
+void handleNotFound() {
+  if (apMode) {
+    server.sendHeader("Location", "/", true);
+    server.send(302, "text/plain", "");
+  } else {
+    server.send(404, "text/plain", "Not found");
+  }
+}
+
+void jsonChunkBegin(){
+  webPrepareConnectionClose();
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200,"application/json; charset=utf-8","");
+}
+
+void jsonChunkEnd(){
+  server.sendContent("");
+  webFinishConnection();
+}
+
+void jsonSendKey(const __FlashStringHelper* key){
+  server.sendContent(F("\""));
+  server.sendContent(key);
+  server.sendContent(F("\":"));
+}
+
+void jsonSendStringValue(const String& value){
+  server.sendContent(F("\""));
+  webSendSafe(value);
+  server.sendContent(F("\""));
+}
+
+void jsonSendStringValue(const char* value){
+  server.sendContent(F("\""));
+  webSendSafe(value);
+  server.sendContent(F("\""));
+}
+
+void jsonSendBoolValue(bool value){
+  server.sendContent(value?F("true"):F("false"));
+}
+
+void jsonSendNumberValue(const String& value){
+  webSendSafe(value);
+}
+
+void jsonSendUIntValue(uint32_t value){
+  char b[16];
+  ultoa(value,b,10);
+  webSendSafe(b);
+}
+
+void jsonSendIntValue(int32_t value){
+  char b[16];
+  ltoa(value,b,10);
+  webSendSafe(b);
+}
+
+void jsonSendFloatValue(float value,uint8_t decimals){
+  char b[24];
+  dtostrf(value,0,decimals,b);
+  char* p=b;
+  while(*p==' ')p++;
+  webSendSafe(p);
+}
+
+void handleApiStatus() {
+  const uint32_t heapBefore=ESP.getFreeHeap();
+
+  time_t now=time(nullptr);
+  struct tm tmNow={};
+  char dateBuf[16]="--",timeBuf[16]="--";
+  if(now>1700000000){
+    localtime_r(&now,&tmNow);
+    snprintf(dateBuf,sizeof(dateBuf),"%02u.%02u.%04u",
+             (unsigned)tmNow.tm_mday,
+             (unsigned)(tmNow.tm_mon+1),
+             (unsigned)(tmNow.tm_year+1900));
+    snprintf(timeBuf,sizeof(timeBuf),"%02u:%02u:%02u",
+             (unsigned)tmNow.tm_hour,
+             (unsigned)tmNow.tm_min,
+             (unsigned)tmNow.tm_sec);
+  }
+
+  const float cap=tankCapacityLiters();
+  const float lpm=(cfg.tankHeightMm>0)?cap/cfg.tankHeightMm:0.0f;
+  const float c1=historyConsumptionDays(1);
+  const float c7=historyConsumptionDays(7);
+  const float c30=historyConsumptionDays(30);
+  const float c365=historyConsumptionDays(365);
+
+  jsonChunkBegin();
+  server.sendContent(F("{"));
+
+  jsonSendKey(F("version"));jsonSendStringValue(FW_VERSION);server.sendContent(F(","));
+  jsonSendKey(F("sensor"));jsonSendStringValue(sensorName(activeSensorType));server.sendContent(F(","));
+  jsonSendKey(F("tank_geometry"));jsonSendStringValue(cfg.geometry==GEOMETRY_CYLINDER?"cylinder":"rect");server.sendContent(F(","));
+
+  jsonSendKey(F("display_page"));jsonSendUIntValue(displayPage);server.sendContent(F(","));
+  jsonSendKey(F("display_auto"));jsonSendBoolValue(cfg.displayAutoRotate);server.sendContent(F(","));
+  jsonSendKey(F("display_page_seconds"));jsonSendUIntValue(cfg.displayPageSeconds);server.sendContent(F(","));
+  jsonSendKey(F("display_invert"));jsonSendBoolValue(cfg.displayInvert);server.sendContent(F(","));
+  jsonSendKey(F("display_page_mask"));jsonSendUIntValue(cfg.displayPageMask);server.sendContent(F(","));
+  jsonSendKey(F("display_font_weight"));jsonSendUIntValue(cfg.displayFontWeight);server.sendContent(F(","));
+
+  jsonSendKey(F("vl_ok"));jsonSendBoolValue(sensorOk);server.sendContent(F(","));
+  jsonSendKey(F("sensor_ok"));jsonSendBoolValue(sensorOk);server.sendContent(F(","));
+  jsonSendKey(F("aht_enabled"));jsonSendBoolValue(cfg.ahtEnabled);server.sendContent(F(","));
+  jsonSendKey(F("aht_ok"));jsonSendBoolValue(ahtOk);server.sendContent(F(","));
+  jsonSendKey(F("aht_interval_ms"));jsonSendUIntValue(cfg.ahtIntervalMs);server.sendContent(F(","));
+  jsonSendKey(F("aht_temperature_offset_c"));jsonSendFloatValue(cfg.ahtTemperatureOffsetC,1);server.sendContent(F(","));
+  jsonSendKey(F("aht_humidity_offset_percent"));jsonSendFloatValue(cfg.ahtHumidityOffsetPercent,1);server.sendContent(F(","));
+
+  jsonSendKey(F("temperature_c"));
+  if(ahtOk&&isfinite(ahtTemperatureC))jsonSendFloatValue(ahtTemperatureC,1);else server.sendContent(F("null"));
+  server.sendContent(F(","));
+
+  jsonSendKey(F("humidity_percent"));
+  if(ahtOk&&isfinite(ahtHumidityPercent))jsonSendFloatValue(ahtHumidityPercent,1);else server.sendContent(F("null"));
+  server.sendContent(F(","));
+
+  jsonSendKey(F("dew_point_c"));
+  if(ahtOk&&isfinite(ahtDewPointC))jsonSendFloatValue(ahtDewPointC,1);else server.sendContent(F("null"));
+  server.sendContent(F(","));
+
+  jsonSendKey(F("condensation_reserve_c"));
+  if(ahtOk&&isfinite(ahtCondensationReserveC))jsonSendFloatValue(ahtCondensationReserveC,1);else server.sendContent(F("null"));
+  server.sendContent(F(","));
+
+  jsonSendKey(F("aht_status"));jsonSendStringValue(ahtStatusText());server.sendContent(F(","));
+  jsonSendKey(F("aht_age_s"));
+  if(lastAhtValidMs>0)jsonSendUIntValue((millis()-lastAhtValidMs)/1000UL);else server.sendContent(F("null"));
+  server.sendContent(F(","));
+
+
+  jsonSendKey(F("raw_distance_mm"));
+  if(isfinite(rawDistanceMm))jsonSendFloatValue(rawDistanceMm,1);else server.sendContent(F("null"));
+  server.sendContent(F(","));
+
+  jsonSendKey(F("filtered_distance_mm"));
+  if(isfinite(filteredDistanceMm))jsonSendFloatValue(filteredDistanceMm,1);else server.sendContent(F("null"));
+  server.sendContent(F(","));
+
+  jsonSendKey(F("level_height_mm"));
+  if(isfinite(tankHeightNowMm))jsonSendFloatValue(tankHeightNowMm,1);else server.sendContent(F("null"));
+  server.sendContent(F(","));
+
+  jsonSendKey(F("level_percent"));
+  if(isfinite(tankPercent))jsonSendFloatValue(tankPercent,1);else server.sendContent(F("null"));
+  server.sendContent(F(","));
+
+  jsonSendKey(F("percent"));
+  if(isfinite(tankPercent))jsonSendFloatValue(tankPercent,1);else server.sendContent(F("null"));
+  server.sendContent(F(","));
+
+  jsonSendKey(F("level_liters"));
+  if(isfinite(tankLiters))jsonSendFloatValue(tankLiters,1);else server.sendContent(F("null"));
+  server.sendContent(F(","));
+
+  jsonSendKey(F("liters"));
+  if(isfinite(tankLiters))jsonSendFloatValue(tankLiters,1);else server.sendContent(F("null"));
+  server.sendContent(F(","));
+
+  jsonSendKey(F("liters_per_mm"));jsonSendFloatValue(lpm,2);server.sendContent(F(","));
+  jsonSendKey(F("consumption_today_l"));jsonSendFloatValue(c1,1);server.sendContent(F(","));
+  jsonSendKey(F("consumption_7d_l"));jsonSendFloatValue(c7,1);server.sendContent(F(","));
+  jsonSendKey(F("consumption_30d_l"));jsonSendFloatValue(c30,1);server.sendContent(F(","));
+  jsonSendKey(F("consumption_365d_l"));jsonSendFloatValue(c365,1);server.sendContent(F(","));
