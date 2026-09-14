@@ -1,35 +1,35 @@
 /*
 ===============================================================================
- FUELLSTANDSMESSER_CLASSIC V0.12.0
+ FUELLSTANDSMESSER_CLASSIC V0.12.3
  ESP8266 D1 mini | VL53L0X/VL53L1X | Nokia 5110 | MQTT
 ===============================================================================
 
-ZIEL
-- Rueckportierung der bewaehrten Fuellstandsmesser3-Mess-/Tanklogik
-  auf ESP8266 D1 mini.
-- Bewusst schlanker als Fuellstandsmesser3: keine grosse Historie, kein BME,
-  kein OLED, kein ESP32-NVS/Preferences.
+GOAL
+- Backport the proven Fuellstandsmesser3 measurement/tank logic
+  to the ESP8266 D1 mini.
+- Intentionally leaner than Fuellstandsmesser3: no large history, no BME,
+  no OLED, no ESP32 NVS/Preferences.
 
-BESCHAETIGTE HARDWAREBASIS
+KNOWN HARDWARE BASE
 - ESP8266 D1 mini
 - ToF I2C:
     SDA = D1
     SCL = D2
-- Nokia 5110 / PCD8544: verwendete Pins D5, D4, D3, D6, D7
+- Nokia 5110 / PCD8544: pins used D5, D4, D3, D6, D7
 
-DISPLAY-SIGNALZUORDNUNG IN DIESEM STAND
+DISPLAY SIGNAL MAPPING IN THIS VERSION
 - CLK = D5
 - DIN = D7
 - DC  = D4
 - CS  = D6
 - RST = D3
 
-Diese Zuordnung entspricht der ueblichen PCD8544-Verdrahtung mit
-D5 als Clock und D7 als Datenleitung. Falls die alte Classic-Hardware
-die fuenf bestaetigten Pins anders zuordnet, muessen nur die fuenf
-Konstanten unten geaendert werden.
+This mapping corresponds to the usual PCD8544 wiring with
+D5 as clock and D7 as data. If the old Classic hardware maps
+the five confirmed pins differently, only the five constants
+below need to be changed.
 
-BIBLIOTHEKEN
+LIBRARIES
 - ESP8266 Arduino Core
 - Adafruit GFX
 - Adafruit PCD8544 Nokia 5110 LCD
@@ -37,9 +37,9 @@ BIBLIOTHEKEN
 - Adafruit VL53L1X
 - PubSubClient
 
-MQTT-KOMPATIBILITAET
-- "average"     = aktueller Tankinhalt in Litern
-- "fuellhoehe"  = aktueller gefilterter ToF-Sensorabstand in mm
+MQTT COMPATIBILITY
+- "average"     = current tank content in liters
+- "fuellhoehe"  = current filtered ToF sensor distance in mm
 
 ===============================================================================
 */
@@ -74,9 +74,9 @@ MQTT-KOMPATIBILITAET
 // -----------------------------------------------------------------------------
 // ARDUINO .INO PREPROCESSOR GUARD
 // -----------------------------------------------------------------------------
-// Der Arduino-Preprocessor erzeugt sonst fuer Funktionen mit spaeter definierten
-// Struct-Typen ungueltige Prototypen. Diese expliziten Deklarationen verhindern
-// das fuer die Config-Migrationshelfer.
+// The Arduino preprocessor would otherwise generate invalid prototypes for functions
+// whose struct types are defined later. These explicit declarations prevent that
+// for the configuration migration helpers.
 // Web output helpers: explicit prototypes required before History API.
 // -----------------------------------------------------------------------------
 // VERSION
@@ -93,11 +93,11 @@ MQTT-KOMPATIBILITAET
 
 
 // -----------------------------------------------------------------------------
-// FUELLSTANDSMESSER3-KOMPATIBLE TAGESHISTORIE
+// FUELLSTANDSMESSER3-COMPATIBLE DAILY HISTORY
 // -----------------------------------------------------------------------------
-// CSV/API/UI sind zu Fuellstandsmesser3 kompatibel.
-// Intern bleibt LittleFS hardwaregerecht fuer den ESP8266.
-// Quellen: 0=MEASURED, 1=IMPORTED, 2=TEST.
+// CSV/API/UI remain compatible with Fuellstandsmesser3.
+// Internally, LittleFS remains appropriate for the ESP8266 hardware.
+// Sources: 0=MEASURED, 1=IMPORTED, 2=TEST.
 
 // -----------------------------------------------------------------------------
 // CONFIG
@@ -198,8 +198,8 @@ uint32_t measurementCount = 0;
 uint32_t measurementErrors = 0;
 uint32_t sensorRecoveries = 0;
 
-bool ahtOk = false;                 // mindestens eine gueltige aktuelle Messung
-bool ahtInitialized = false;        // Sensor ACK + Initialisierung erfolgreich
+bool ahtOk = false;                 // at least one current valid measurement
+bool ahtInitialized = false;        // sensor ACK + initialization successful
 float ahtTemperatureC = NAN;
 float ahtHumidityPercent = NAN;
 float ahtDewPointC = NAN;
@@ -230,9 +230,9 @@ uint8_t medUsed = 0;
 
 float lastAcceptedDistance = NAN;
 
-// Sprungbestaetigung:
-// Ein einzelner grosser Sprung wird verworfen. Mehrere aehnliche neue Werte
-// werden als echter neuer Pegel akzeptiert.
+// Jump confirmation:
+// A single large jump is rejected. Several similar new values
+// are accepted as a genuine new level.
 float pendingJumpDistance = NAN;
 uint8_t pendingJumpCount = 0;
 
@@ -240,4 +240,3 @@ uint8_t pendingJumpCount = 0;
 float startupCandidateDistance = NAN;
 uint8_t startupCandidateCount = 0;
 bool startupMeasurementStable = false;
-
