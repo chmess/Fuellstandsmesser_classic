@@ -924,3 +924,4 @@ void scanI2C() {
   if (found == 0) Serial.println(TR("[I2C] KEIN GERAET GEFUNDEN","[I2C] NO DEVICE FOUND"));
   Serial.println(TR("[I2C] Scan Ende","[I2C] scan end"));
 }
+
