@@ -171,7 +171,7 @@ uint32_t configCrcV5(const ConfigV5& c) {
 void migrateConfigV5ToCurrent(const ConfigV5& oldCfg) {
   memset(&cfg, 0, sizeof(cfg));
 
-  // V6 erweitert V5 nur am Ende vor CRC. Der gemeinsame Prefix bleibt gleich.
+  // V6 extends V5 only at the end before the CRC. The shared prefix remains unchanged.
   memcpy(&cfg, &oldCfg, offsetof(ConfigV5, crc));
 
   cfg.magic = CONFIG_MAGIC;
@@ -543,7 +543,7 @@ void saveConfig() {
   EEPROM.put(0, cfg);
   EEPROM.commit();
 
-  Serial.println(F("[CONFIG] gespeichert"));
+  Serial.println(TR("[CONFIG] gespeichert","[CONFIG] saved"));
 }
 
 bool loadConfig() {
@@ -552,7 +552,7 @@ bool loadConfig() {
   if (cfg.magic == CONFIG_MAGIC &&
       cfg.version == CONFIG_VERSION &&
       cfg.crc == configCrc(cfg)) {
-    Serial.println(F("[CONFIG] geladen V7"));
+    Serial.println(TR("[CONFIG] geladen V7","[CONFIG] loaded V7"));
     return true;
   }
 
@@ -685,7 +685,7 @@ bool loadConfig() {
     return true;
   }
 
-  Serial.println(F("[CONFIG] ungueltig -> Defaults"));
+  Serial.println(TR("[CONFIG] ungueltig -> Defaults","[CONFIG] invalid -> defaults"));
   setDefaults();
   saveConfig();
   return false;
@@ -696,7 +696,7 @@ bool validateConfig(bool logChanges) {
 
   auto logFix = [&](const __FlashStringHelper* msg) {
     if (logChanges) {
-      Serial.print(F("[CONFIG] Korrektur: "));
+      Serial.print(TR("[CONFIG] Korrektur: ","[CONFIG] correction: "));
       Serial.println(msg);
     }
     changed = true;
@@ -716,7 +716,7 @@ bool validateConfig(bool logChanges) {
       c=='_' || c=='-' || c=='/';
     if(!ok){
       strlcpy(cfg.haDiscoveryPrefix, "homeassistant", sizeof(cfg.haDiscoveryPrefix));
-      logFix(F("HA Discovery Prefix ungueltig -> homeassistant"));
+      logFix(F(LTXT_CFG_FIX_HA_PREFIX));
       break;
     }
   }
@@ -725,14 +725,14 @@ bool validateConfig(bool logChanges) {
       cfg.ahtTemperatureOffsetC < -20.0f ||
       cfg.ahtTemperatureOffsetC > 20.0f) {
     cfg.ahtTemperatureOffsetC = 0.0f;
-    logFix(F("AHT Temperatur-Offset -> 0.0 C"));
+    logFix(F(LTXT_CFG_FIX_AHT_TEMP));
   }
 
   if (!isfinite(cfg.ahtHumidityOffsetPercent) ||
       cfg.ahtHumidityOffsetPercent < -50.0f ||
       cfg.ahtHumidityOffsetPercent > 50.0f) {
     cfg.ahtHumidityOffsetPercent = 0.0f;
-    logFix(F("AHT Feuchte-Offset -> 0.0 %"));
+    logFix(F(LTXT_CFG_FIX_AHT_HUM));
   }
 
   if (cfg.ahtIntervalMs < 2000UL || cfg.ahtIntervalMs > 300000UL) {
@@ -742,32 +742,32 @@ bool validateConfig(bool logChanges) {
 
   if (cfg.sensorType > SENSOR_VL53L1X) {
     cfg.sensorType = SENSOR_AUTO;
-    logFix(F("Sensorwahl -> AUTO"));
+    logFix(TR("Sensorwahl -> AUTO","Sensor selection -> AUTO"));
   }
 
   if (cfg.geometry > GEOMETRY_CYLINDER) {
     cfg.geometry = GEOMETRY_RECT;
-    logFix(F("Tankgeometrie -> QUADER"));
+    logFix(TR("Tankgeometrie -> QUADER","Tank geometry -> RECTANGULAR"));
   }
 
   if (!isfinite(cfg.tankLengthMm) || cfg.tankLengthMm < 100.0f || cfg.tankLengthMm > 20000.0f) {
     cfg.tankLengthMm = 1000.0f;
-    logFix(F("Tanklaenge -> 1000 mm"));
+    logFix(F(LTXT_CFG_FIX_TANK_LENGTH));
   }
 
   if (!isfinite(cfg.tankWidthMm) || cfg.tankWidthMm < 100.0f || cfg.tankWidthMm > 20000.0f) {
     cfg.tankWidthMm = 1000.0f;
-    logFix(F("Tankbreite -> 1000 mm"));
+    logFix(F(LTXT_CFG_FIX_TANK_WIDTH));
   }
 
   if (!isfinite(cfg.tankHeightMm) || cfg.tankHeightMm < 100.0f || cfg.tankHeightMm > 10000.0f) {
     cfg.tankHeightMm = 1500.0f;
-    logFix(F("Tankhoehe -> 1500 mm"));
+    logFix(F(LTXT_CFG_FIX_TANK_HEIGHT));
   }
 
   if (!isfinite(cfg.diameterMm) || cfg.diameterMm < 100.0f || cfg.diameterMm > 20000.0f) {
     cfg.diameterMm = 1000.0f;
-    logFix(F("Tankdurchmesser -> 1000 mm"));
+    logFix(F(LTXT_CFG_FIX_TANK_DIAMETER));
   }
 
   if (!isfinite(cfg.fullDistanceMm) || cfg.fullDistanceMm < 20.0f || cfg.fullDistanceMm > 10000.0f) {
@@ -786,11 +786,11 @@ bool validateConfig(bool logChanges) {
 
   if (cfg.measurementIntervalMs < 500UL) {
     cfg.measurementIntervalMs = 500UL;
-    logFix(F("Messintervall -> 500 ms"));
+    logFix(TR("Messintervall -> 500 ms","Measurement interval -> 500 ms"));
   }
   if (cfg.measurementIntervalMs > 3600000UL) {
     cfg.measurementIntervalMs = 3600000UL;
-    logFix(F("Messintervall -> 3600000 ms"));
+    logFix(TR("Messintervall -> 3600000 ms","Measurement interval -> 3600000 ms"));
   }
 
   if (cfg.minDistanceMm < 20) {
@@ -830,21 +830,21 @@ bool validateConfig(bool logChanges) {
 
   if (cfg.displayPageSeconds < 2 || cfg.displayPageSeconds > 60) {
     cfg.displayPageSeconds = 5;
-    logFix(F("LCD-Seitenintervall -> 5 s"));
+    logFix(F(LTXT_CFG_FIX_LCD_INTERVAL));
   }
 
   cfg.displayPageMask &= 0x1F;
   if (cfg.displayPageMask == 0) {
     cfg.displayPageMask = 0x01;
-    logFix(F("LCD-Seitenmaske -> Seite 1"));
+    logFix(F(LTXT_CFG_FIX_LCD_MASK));
   }
 
   if (cfg.displayFontWeight > 2) {
     cfg.displayFontWeight = 1;
-    logFix(F("LCD-Schriftstaerke -> Fett"));
+    logFix(F(LTXT_CFG_FIX_LCD_FONT));
   }
 
-  // Strings immer sicher terminieren.
+  // Always terminate strings safely.
   cfg.wifiSsid[sizeof(cfg.wifiSsid)-1] = 0;
   cfg.wifiPass[sizeof(cfg.wifiPass)-1] = 0;
   cfg.mqttHost[sizeof(cfg.mqttHost)-1] = 0;
@@ -880,7 +880,7 @@ const char* sensorName(uint8_t t) {
 }
 
 const char* geometryName() {
-  return cfg.geometry == GEOMETRY_CYLINDER ? "Zylinder" : "Quader";
+  return cfg.geometry == GEOMETRY_CYLINDER ? LTXT_GEOMETRY_CYL_SHORT : LTXT_GEOMETRY_RECT_SHORT;
 }
 
 bool i2cPresent(uint8_t addr) {
@@ -908,19 +908,19 @@ bool readReg16(uint8_t addr, uint16_t reg, uint8_t& v) {
 }
 
 void scanI2C() {
-  Serial.println(F("[I2C] Scan Start"));
+  Serial.println(TR("[I2C] Scan Start","[I2C] scan start"));
   uint8_t found = 0;
   for (uint8_t addr = 1; addr < 127; addr++) {
     Wire.beginTransmission(addr);
     uint8_t err = Wire.endTransmission();
     if (err == 0) {
-      Serial.print(F("[I2C] gefunden: 0x"));
+      Serial.print(TR("[I2C] gefunden: 0x","[I2C] found: 0x"));
       if (addr < 16) Serial.print('0');
       Serial.println(addr, HEX);
       found++;
     }
     yield();
   }
-  if (found == 0) Serial.println(F("[I2C] KEIN GERAET GEFUNDEN"));
-  Serial.println(F("[I2C] Scan Ende"));
+  if (found == 0) Serial.println(TR("[I2C] KEIN GERAET GEFUNDEN","[I2C] NO DEVICE FOUND"));
+  Serial.println(TR("[I2C] Scan Ende","[I2C] scan end"));
 }
