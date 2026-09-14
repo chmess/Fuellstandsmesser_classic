@@ -1161,3 +1161,394 @@ bool historyChronologicalBoundsFromOpenFile(
   uint32_t& newestLogical
 ){
   if(historyHeader.count==0)return false;
+
+  bool have=false;
+  uint32_t minDay=0xFFFFFFFFUL;
+  uint32_t maxDay=0;
+
+  for(uint32_t li=0;li<historyHeader.count;li++){
+    DailyHistoryRecord r;
+    if(!historyReadChronologicalFromOpenFile(f,li,r)){
+      if((li&0x7F)==0)yield();
+      continue;
+    }
+    if(r.dayKey==0)continue;
+
+    if(!have || r.dayKey<minDay){
+      minDay=r.dayKey;
+      oldestRecord=r;
+      oldestLogical=li;
+    }
+    if(!have || r.dayKey>=maxDay){
+      maxDay=r.dayKey;
+      newestRecord=r;
+      newestLogical=li;
+    }
+    have=true;
+    if((li&0x7F)==0)yield();
+  }
+
+  return have;
+}
+
+float historyCapacityLiters(){return tankCapacityLiters();}
+
+float historyPercentForLiters(float liters){
+  float cap=historyCapacityLiters();
+  return cap>0?constrain(liters/cap*100.0f,0.0f,100.0f):0.0f;
+}
+
+void handleHistoryApi(){
+  historyApiRequests++;
+  const uint32_t apiStartMs=millis();
+
+  uint16_t days=365;
+  if(server.hasArg("days")){
+    long d=server.arg("days").toInt();
+    if(d>0&&d<=3650)days=(uint16_t)d;
+  }
+
+  if(!historyReady){
+    historyApiErrors++;
+    server.send(503,"application/json",
+      "{\"ok\":false,\"error\":\"history_not_ready\",\"items\":[],\"stats\":{\"days\":0}}");
+    return;
+  }
+
+  File f=LittleFS.open(HISTORY_FILE,"r");
+  if(!f){
+    historyApiErrors++;
+    server.send(500,"application/json",
+      "{\"ok\":false,\"error\":\"history_file_open_failed\",\"items\":[],\"stats\":{\"days\":0}}");
+    return;
+  }
+
+  DailyHistoryRecord oldestRecord{},newestRecord{};
+  uint32_t oldestLogical=0,newestLogical=0;
+  const bool haveBounds=historyChronologicalBoundsFromOpenFile(
+    f,oldestRecord,oldestLogical,newestRecord,newestLogical);
+
+  uint32_t anchorDay=0;
+  bool anchorFromClock=historyDateNow(anchorDay);
+  if(!anchorFromClock){
+    if(haveBounds)anchorDay=newestRecord.dayKey;
+  }else if(haveBounds && newestRecord.dayKey>anchorDay){
+    anchorDay=newestRecord.dayKey;
+    anchorFromClock=false;
+  }
+
+  const uint32_t first=historyFirstDayForAnchor(anchorDay,days);
+
+  auto logicalAtChronologicalOffset=[&](uint32_t offset)->uint32_t{
+    if(historyHeader.count==0)return 0;
+    return (oldestLogical+offset)%historyHeader.count;
+  };
+
+  uint32_t scanned=0,uniqueEligible=0,duplicatesSkipped=0;
+  DailyHistoryRecord pending{};
+  bool havePending=false;
+
+  auto countPending=[&]()->void{
+    if(!havePending)return;
+    if((!first || pending.dayKey>=first) && (!anchorDay || pending.dayKey<=anchorDay)){
+      uniqueEligible++;
+    }
+  };
+
+  for(uint32_t off=0;off<historyHeader.count;off++){
+    const uint32_t li=logicalAtChronologicalOffset(off);
+    DailyHistoryRecord r;
+    scanned++;
+    if(!historyReadChronologicalFromOpenFile(f,li,r)){
+      if((scanned&0x7F)==0)yield();
+      continue;
+    }
+
+    if(!havePending){
+      pending=r;havePending=true;
+    }else if(r.dayKey==pending.dayKey){
+      pending=r;
+      duplicatesSkipped++;
+    }else{
+      countPending();
+      pending=r;
+    }
+    if((scanned&0x7F)==0)yield();
+  }
+  countPending();
+
+  const uint32_t maxPoints=365;
+  const uint32_t calculatedStep=(uniqueEligible+maxPoints-1U)/maxPoints;
+  const uint32_t step=(calculatedStep<1U)?1U:calculatedStep;
+
+  webPrepareConnectionClose();
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200,"application/json; charset=utf-8","");
+
+  server.sendContent(F("{\"ok\":true,\"items\":["));
+
+  bool comma=false;
+  uint32_t eligible=0,emitted=0,ordinalEligible=0;
+  float totalC=0,totalR=0,minP=101,maxP=-1;
+
+  auto emitPending=[&]()->void{
+    if(!havePending)return;
+    if(first && pending.dayKey<first)return;
+    if(anchorDay && pending.dayKey>anchorDay)return;
+
+    eligible++;
+    totalC+=(float)pending.consumptionLiters;
+    totalR+=(float)pending.refillLiters;
+    const float pct=historyPercentForLiters(pending.levelLiters);
+    if(pct<minP)minP=pct;
+    if(pct>maxP)maxP=pct;
+
+    const bool emit=(ordinalEligible%step)==0 || pending.dayKey==anchorDay;
+    ordinalEligible++;
+    if(!emit)return;
+
+    const time_t ts=historyDayKeyToTime(pending.dayKey);
+    if(ts==(time_t)-1 || ts<=0)return;
+
+    char tbuf[24];
+    snprintf(tbuf,sizeof(tbuf),"%llu",
+             (unsigned long long)((uint64_t)(uint32_t)ts*1000ULL));
+
+    if(comma)server.sendContent(F(","));
+    comma=true;
+
+    char item[176];
+    const int n=snprintf(
+      item,sizeof(item),
+      "{\"time\":%s,\"percent\":%.1f,\"liters\":%u,"
+      "\"consumedLiters\":%u,\"refillLiters\":%u,\"source\":%u}",
+      tbuf,(double)pct,
+      (unsigned)pending.levelLiters,
+      (unsigned)pending.consumptionLiters,
+      (unsigned)pending.refillLiters,
+      (unsigned)pending.source
+    );
+
+    if(n>0 && (size_t)n<sizeof(item))server.sendContent(item);
+    emitted++;
+    yield();
+  };
+
+  havePending=false;
+  for(uint32_t off=0;off<historyHeader.count;off++){
+    const uint32_t li=logicalAtChronologicalOffset(off);
+    DailyHistoryRecord r;
+    if(!historyReadChronologicalFromOpenFile(f,li,r)){
+      if((off&0x7F)==0)yield();
+      continue;
+    }
+
+    if(!havePending){
+      pending=r;havePending=true;
+    }else if(r.dayKey==pending.dayKey){
+      pending=r;
+    }else{
+      emitPending();
+      pending=r;
+    }
+    if((off&0x7F)==0)yield();
+  }
+  emitPending();
+
+  f.close();
+
+  server.sendContent(F("],\"stats\":{\"requestedDays\":"));webSendUInt(days);
+  server.sendContent(F(",\"days\":"));webSendUInt(eligible);
+  server.sendContent(F(",\"items\":"));webSendUInt(emitted);
+  server.sendContent(F(",\"scanned\":"));webSendUInt(scanned);
+  server.sendContent(F(",\"duplicatesSkipped\":"));webSendUInt(duplicatesSkipped);
+  server.sendContent(F(",\"anchorDay\":"));webSendUInt(anchorDay);
+  server.sendContent(F(",\"oldestDay\":"));webSendUInt(haveBounds?oldestRecord.dayKey:0);
+  server.sendContent(F(",\"newestDay\":"));webSendUInt(haveBounds?newestRecord.dayKey:0);
+  server.sendContent(F(",\"clockAnchor\":"));
+  server.sendContent(anchorFromClock?F("true"):F("false"));
+  server.sendContent(F(",\"consumptionLiters\":"));webSendFloat(totalC,1);
+  server.sendContent(F(",\"refillLiters\":"));webSendFloat(totalR,1);
+  server.sendContent(F(",\"minPercent\":"));
+  if(minP<=100)webSendFloat(minP,1);else server.sendContent(F("null"));
+  server.sendContent(F(",\"maxPercent\":"));
+  if(maxP>=0)webSendFloat(maxP,1);else server.sendContent(F("null"));
+  server.sendContent(F("}}"));
+
+  server.sendContent("");
+  webFinishConnection();
+
+  historyApiLastMs=millis()-apiStartMs;
+  historyApiLastItems=emitted;
+
+  Serial.print(F("[HISTORY API] reqDays="));Serial.print(days);
+  Serial.print(F(" actualDays="));Serial.print(eligible);
+  Serial.print(F(" oldest="));Serial.print(haveBounds?oldestRecord.dayKey:0);
+  Serial.print(F(" newest="));Serial.print(haveBounds?newestRecord.dayKey:0);
+  Serial.print(F(" pivot="));Serial.print(oldestLogical);
+  Serial.print(F(" step="));Serial.print(step);
+  Serial.print(F(" dupSkip="));Serial.print(duplicatesSkipped);
+  Serial.print(F(" items="));Serial.print(emitted);
+  Serial.print(F(" time="));Serial.print(historyApiLastMs);
+  Serial.println(F(" ms"));
+}
+
+void handleClimateHistoryApi(){
+  uint16_t days=365;
+  if(server.hasArg("days")){
+    long d=server.arg("days").toInt();
+    if(d>0&&d<=3650)days=(uint16_t)d;
+  }
+
+  if(!historyReady){
+    server.send(503,"application/json",
+      "{\"ok\":false,\"error\":\"history_not_ready\",\"items\":[]}");
+    return;
+  }
+
+  File f=LittleFS.open(HISTORY_FILE,"r");
+  if(!f){
+    server.send(500,"application/json",
+      "{\"ok\":false,\"error\":\"history_file_open_failed\",\"items\":[]}");
+    return;
+  }
+
+  DailyHistoryRecord oldestRecord{},newestRecord{};
+  uint32_t oldestLogical=0,newestLogical=0;
+  const bool haveBounds=historyChronologicalBoundsFromOpenFile(
+    f,oldestRecord,oldestLogical,newestRecord,newestLogical);
+
+  uint32_t anchorDay=0;
+  if(!historyDateNow(anchorDay) && haveBounds)anchorDay=newestRecord.dayKey;
+  else if(haveBounds && newestRecord.dayKey>anchorDay)anchorDay=newestRecord.dayKey;
+
+  const uint32_t first=historyFirstDayForAnchor(anchorDay,days);
+
+  auto logicalAtChronologicalOffset=[&](uint32_t offset)->uint32_t{
+    if(historyHeader.count==0)return 0;
+    return (oldestLogical+offset)%historyHeader.count;
+  };
+
+  uint32_t climateDays=0;
+  DailyHistoryRecord pending{};
+  bool havePending=false;
+
+  auto countPending=[&]()->void{
+    if(!havePending)return;
+    if(first && pending.dayKey<first)return;
+    if(anchorDay && pending.dayKey>anchorDay)return;
+    if(pending.climateSamples==0)return;
+    if(pending.tempAvgHalfC==255 && pending.humidityAvgPct==255)return;
+    climateDays++;
+  };
+
+  for(uint32_t off=0;off<historyHeader.count;off++){
+    const uint32_t li=logicalAtChronologicalOffset(off);
+    DailyHistoryRecord r;
+    if(!historyReadChronologicalFromOpenFile(f,li,r)){
+      if((off&0x7F)==0)yield();
+      continue;
+    }
+
+    if(!havePending){
+      pending=r;havePending=true;
+    }else if(r.dayKey==pending.dayKey){
+      pending=r;
+    }else{
+      countPending();
+      pending=r;
+    }
+
+    if((off&0x7F)==0)yield();
+  }
+  countPending();
+
+  const uint32_t maxPoints=365;
+  uint32_t step=(climateDays+maxPoints-1U)/maxPoints;
+  if(step<1U)step=1U;
+
+  webPrepareConnectionClose();
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200,"application/json; charset=utf-8","");
+
+  String out;
+  out.reserve(384);
+  out=F("{\"ok\":true,\"items\":[");
+
+  bool comma=false;
+  uint32_t ordinal=0,emitted=0;
+  havePending=false;
+
+  auto emitPending=[&]()->void{
+    if(!havePending)return;
+    if(first && pending.dayKey<first)return;
+    if(anchorDay && pending.dayKey>anchorDay)return;
+    if(pending.climateSamples==0)return;
+    if(pending.tempAvgHalfC==255 && pending.humidityAvgPct==255)return;
+
+    const bool emit=(ordinal%step)==0 || pending.dayKey==anchorDay;
+    ordinal++;
+    if(!emit)return;
+
+    const time_t ts=historyDayKeyToTime(pending.dayKey);
+    if(ts==(time_t)-1 || ts<=0)return;
+
+    char num[24];
+    if(comma)out+=',';
+    comma=true;
+
+    snprintf(num,sizeof(num),"%llu",
+      (unsigned long long)((uint64_t)(uint32_t)ts*1000ULL));
+    out+=F("{\"time\":");out+=num;
+
+    out+=F(",\"samples\":");out+=String(pending.climateSamples);
+
+    out+=F(",\"tAvg\":");
+    if(pending.tempAvgHalfC!=255)out+=String(historyDecodeTempHalfC(pending.tempAvgHalfC),1);
+    else out+=F("null");
+
+    out+=F(",\"tMin\":");
+    if(pending.tempMinHalfC!=255)out+=String(historyDecodeTempHalfC(pending.tempMinHalfC),1);
+    else out+=F("null");
+
+    out+=F(",\"tMax\":");
+    if(pending.tempMaxHalfC!=255)out+=String(historyDecodeTempHalfC(pending.tempMaxHalfC),1);
+    else out+=F("null");
+
+    out+=F(",\"hAvg\":");
+    if(pending.humidityAvgPct!=255)out+=String(pending.humidityAvgPct);
+    else out+=F("null");
+
+    out+=F(",\"hMin\":");
+    if(pending.humidityMinPct!=255)out+=String(pending.humidityMinPct);
+    else out+=F("null");
+
+    out+=F(",\"hMax\":");
+    if(pending.humidityMaxPct!=255)out+=String(pending.humidityMaxPct);
+    else out+=F("null");
+
+    out+='}';
+    emitted++;
+
+    if(out.length()>300){
+      server.sendContent(out);
+      out="";
+      yield();
+    }
+  };
+
+  for(uint32_t off=0;off<historyHeader.count;off++){
+    const uint32_t li=logicalAtChronologicalOffset(off);
+    DailyHistoryRecord r;
+    if(!historyReadChronologicalFromOpenFile(f,li,r)){
+      if((off&0x7F)==0)yield();
+      continue;
+    }
+
+    if(!havePending){
+      pending=r;havePending=true;
+    }else if(r.dayKey==pending.dayKey){
+      pending=r;
+    }else{
+      emitPending();
+      pending=r;
