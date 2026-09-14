@@ -1,13 +1,25 @@
-# GitHub Upload Checklist
+# GitHub Upload Checklist / GitHub-Upload-Checkliste
 
-Vor dem ersten öffentlichen Push:
-
-- [ ] Repository-Name festlegen: `Fuellstandsmesser_classic`
-- [x] MIT License eingebunden
-- [ ] `README.md` im GitHub-Preview prüfen
+## Deutsch
+- [x] Repository-Name `Fuellstandsmesser_classic`
+- [x] MIT License
+- [x] zweisprachige Dokumentation
+- [x] Sprachkonzept Deutsch/Englisch dokumentiert
+- [ ] README im GitHub-Preview prüfen
 - [ ] Screenshots auf private Informationen prüfen
-- [ ] Quellcode auf echte SSIDs, Passwörter, Broker-User und private IPs prüfen
-- [ ] Firmware aus `firmware/Fuellstandsmesser_classic/` noch einmal kompilieren
-- [ ] Release-Tag `v0.12.0` anlegen
-- [ ] `CHANGELOG.md` prüfen
-- [ ] optional GitHub Issues aktivieren
+- [ ] Quellcode auf echte Zugangsdaten/private IPs prüfen
+- [ ] Firmware mit Arduino IDE kompilieren
+- [ ] DE- und EN-Build testen
+- [ ] passenden Release-Tag anlegen
+
+## English
+- [x] repository name `Fuellstandsmesser_classic`
+- [x] MIT License
+- [x] bilingual documentation
+- [x] German/English language concept documented
+- [ ] review README rendering
+- [ ] inspect screenshots for private information
+- [ ] scan source for real credentials/private IPs
+- [ ] compile firmware with Arduino IDE
+- [ ] test DE and EN builds
+- [ ] create an appropriate release tag
