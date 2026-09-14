@@ -2334,3 +2334,377 @@ void handleHistoryImportPreview(){
     row+=F("</td><td>");
     if(p.valid&&p.climateValid){
       row+=String(p.tempAvgC,1);row+=F(" C / ");row+=String(p.humidityAvgPct,0);row+=F(" %");
+    }else row+=F("--");
+    row+=F("</td><td>");
+    row+=p.valid?(p.autoDerived?F("automatisch"):F("aus CSV")):p.reason;
+    row+=F("</td><td>");
+    row+=p.valid?F("<span class='ok'>OK</span>"):F("<span class='bad'>Verworfen</span>");
+    row+=F("</td></tr>");
+    server.sendContent(row);
+
+    shown++;
+    if((shown&0x0F)==0)yield();
+  }
+
+  f.close();
+
+  server.sendContent(F("</table></div>"));
+  if(total>shown){
+    server.sendContent(F("<p class='muted'>Nur die ersten 100 Datenzeilen werden angezeigt; geprueft wurden alle.</p>"));
+  }
+
+  server.sendContent(F("<div class='links' style='margin-top:14px'>"));
+  if(ok){
+    server.sendContent(F("<form method='POST' action='/history/import/apply' style='margin:0'><button type='submit' onclick=\"return confirm('Gueltige Daten jetzt in die Historie uebernehmen?')\">Import uebernehmen</button></form>"));
+  }
+  server.sendContent(F("<form method='POST' action='/history/import/cancel' style='margin:0'><button class='danger' type='submit'>Abbrechen</button></form></div></div>"));
+  webStreamEnd();
+}
+
+void handleHistoryImportApply(){
+  File preview=LittleFS.open(HISTORY_IMPORT_PREVIEW_FILE,"r");
+  if(!preview){server.send(400,"text/plain","Keine Vorschau-Datei vorhanden");return;}
+
+  uint32_t today=0; historyDateNow(today);
+  time_t now=time(nullptr);
+  uint32_t oldest=now>1700000000?historyDayKeyFromTime(now-(time_t)3650*86400):0;
+
+  int32_t minOrdinal=INT32_MAX;
+  int32_t maxOrdinal=INT32_MIN;
+  uint32_t previewValid=0;
+
+  while(preview.available()){
+    String line=preview.readStringUntil('\n');line.trim();
+    if(!line.length())continue;
+    if(line.startsWith("Datum")||line.startsWith("datum"))continue;
+
+    HistoryImportParsed p=parseHistoryImportLine(line,today,oldest);
+    if(!p.valid)continue;
+
+    int32_t ord=historyDayOrdinal(p.dayKey);
+    if(ord<0)continue;
+    if(ord<minOrdinal)minOrdinal=ord;
+    if(ord>maxOrdinal)maxOrdinal=ord;
+    previewValid++;
+
+    if((previewValid&0x3F)==0)yield();
+  }
+
+  if(previewValid==0||minOrdinal>maxOrdinal){
+    preview.close();
+    LittleFS.remove(HISTORY_IMPORT_PREVIEW_FILE);
+    server.send(400,"text/plain","Keine gueltigen Importdaten");
+    return;
+  }
+
+  const uint32_t slots=(uint32_t)(maxOrdinal-minOrdinal+1);
+  preview.seek(0,SeekSet);
+
+  LittleFS.remove(HISTORY_IMPORT_INDEX_FILE);
+  File idxFile=LittleFS.open(HISTORY_IMPORT_INDEX_FILE,"w+");
+  if(!idxFile){
+    preview.close();
+    server.send(500,"text/plain","Import-Index konnte nicht erstellt werden");
+    return;
+  }
+
+  if(!historyImportIndexCreate(idxFile,slots)){
+    preview.close();idxFile.close();
+    LittleFS.remove(HISTORY_IMPORT_INDEX_FILE);
+    server.send(500,"text/plain","Import-Index Initialisierung fehlgeschlagen");
+    return;
+  }
+
+  File hist=LittleFS.open(HISTORY_FILE,"r+");
+  if(!hist){
+    preview.close();idxFile.close();
+    LittleFS.remove(HISTORY_IMPORT_INDEX_FILE);
+    server.send(500,"text/plain","History-Datei konnte nicht geoeffnet werden");
+    return;
+  }
+
+  const uint32_t oldestPhysical=historyOldestPhysicalIndex();
+  uint32_t indexed=0;
+
+  for(uint32_t li=0;li<historyHeader.count;li++){
+    const uint32_t physical=(oldestPhysical+li)%historyHeader.capacity;
+    DailyHistoryRecord r;
+    if(!historyReadRecordFromOpenFile(hist,physical,r))continue;
+
+    const int32_t ord=historyDayOrdinal(r.dayKey);
+    if(ord<minOrdinal||ord>maxOrdinal)continue;
+
+    const uint32_t slot=(uint32_t)(ord-minOrdinal);
+    if(historyImportIndexWrite(idxFile,slot,physical))indexed++;
+
+    if((li&0x7F)==0)yield();
+  }
+  idxFile.flush();
+
+  bool bulkAppend = false;
+  if(indexed == 0){
+    if(historyHeader.count == 0){
+      bulkAppend = true;
+    }else{
+      File chronologyFile=LittleFS.open(HISTORY_FILE,"r");
+      DailyHistoryRecord newestExisting{};
+      uint32_t newestExistingLogical=0;
+      if(chronologyFile){
+        historyNewestRecordFromOpenFile(chronologyFile,newestExisting,newestExistingLogical);
+        chronologyFile.close();
+      }
+      const int32_t newestExistingOrdinal=historyDayOrdinal(newestExisting.dayKey);
+      bulkAppend = (newestExisting.dayKey>0 && newestExistingOrdinal < minOrdinal);
+    }
+  }
+
+  if(bulkAppend){
+    Serial.println(F("[IMPORT] BULK-APPEND aktiv: Chronologie bleibt erhalten"));
+  }else if(indexed==0){
+    Serial.println(F("[IMPORT] BULK-APPEND gesperrt: bestehende neuere History -> INDEX-Modus"));
+  }
+
+  const uint32_t importApplyStartMs=millis();
+  uint32_t ok=0,bad=0,derived=0,refills=0,updated=0,appended=0;
+  uint32_t processed=0;
+  uint32_t prevDay=0;
+  uint16_t prevLiters=0;
+  bool prevValid=false;
+  bool headerDirty=false;
+
+  Serial.print(F("[IMPORT] Fast-Apply Start valid="));
+  Serial.print(previewValid);
+  Serial.print(F(" slots="));
+  Serial.print(slots);
+  Serial.print(F(" indexed="));
+  Serial.println(indexed);
+
+  while(preview.available()){
+    String line=preview.readStringUntil('\n');line.trim();
+    if(!line.length())continue;
+    if(line.startsWith("Datum")||line.startsWith("datum"))continue;
+
+    HistoryImportParsed p=parseHistoryImportLine(line,today,oldest);
+    if(!p.valid){bad++;continue;}
+
+    processed++;
+    if((processed%250U)==0U || processed==previewValid){
+      Serial.print(F("[IMPORT] Fortschritt "));
+      Serial.print(processed);
+      Serial.print('/');
+      Serial.println(previewValid);
+      yield();
+    }
+
+    historyDeriveImportFlow(p,prevDay,prevLiters,prevValid);
+
+    if(p.autoDerived){
+      derived++;
+      if(p.refill>=HISTORY_REFILL_MIN_LITERS)refills++;
+    }
+
+    const int32_t ord=historyDayOrdinal(p.dayKey);
+    if(ord<minOrdinal||ord>maxOrdinal){
+      bad++;
+      continue;
+    }
+
+    const uint32_t slot=(uint32_t)(ord-minOrdinal);
+    uint32_t physical=0xFFFFFFFFUL;
+
+    DailyHistoryRecord r={};
+    historyApplyImportedClimate(p,r);
+    r.dayKey=p.dayKey;
+    r.samples=1;
+    r.levelLiters=p.liters;
+    const uint16_t permille=(uint16_t)constrain(
+      (int)lroundf(historyPercentForLiters(p.liters)*10.0f),0,1000);
+    r.avgPermille=r.minPermille=r.maxPermille=permille;
+    r.firstLiters=p.liters;
+    r.consumptionLiters=p.consumption;
+    r.refillLiters=p.refill;
+    r.source=p.source<=HISTORY_TEST?p.source:HISTORY_IMPORTED;
+
+    bool writeOk=false;
+
+    if(bulkAppend){
+      physical=historyHeader.writeIndex;
+      writeOk=historyWriteRecordToOpenFile(hist,physical,r);
+
+      if(writeOk){
+        if(historyHeader.count<historyHeader.capacity)historyHeader.count++;
+        historyHeader.writeIndex=(historyHeader.writeIndex+1)%historyHeader.capacity;
+        headerDirty=true;
+        appended++;
+      }
+    }else{
+      if(!historyImportIndexRead(idxFile,slot,physical)){
+        bad++;
+        continue;
+      }
+
+      if(physical!=0xFFFFFFFFUL && physical<historyHeader.capacity){
+        writeOk=historyWriteRecordToOpenFile(hist,physical,r);
+        if(writeOk)updated++;
+      }else{
+        physical=historyHeader.writeIndex;
+        writeOk=historyWriteRecordToOpenFile(hist,physical,r);
+
+        if(writeOk){
+          if(historyHeader.count<historyHeader.capacity)historyHeader.count++;
+          historyHeader.writeIndex=(historyHeader.writeIndex+1)%historyHeader.capacity;
+          headerDirty=true;
+          appended++;
+          historyImportIndexWrite(idxFile,slot,physical);
+        }
+      }
+    }
+
+    if(writeOk){
+      ok++;
+      historyWriteCount++;
+    }else{
+      bad++;
+      historyWriteErrors++;
+    }
+
+    prevDay=p.dayKey;
+    prevLiters=p.liters;
+    prevValid=true;
+
+    if(bulkAppend){
+      if(((ok+bad)%500U)==0U){
+        hist.flush();
+        yield();
+      }
+    }else if(((ok+bad)&0x3F)==0){
+      hist.flush();
+      yield();
+    }
+  }
+
+  bool headerOk=true;
+  if(headerDirty)headerOk=historyWriteHeader(hist);
+  hist.flush();
+  idxFile.flush();
+
+  preview.close();
+  hist.close();
+  idxFile.close();
+
+  LittleFS.remove(HISTORY_IMPORT_INDEX_FILE);
+  LittleFS.remove(HISTORY_IMPORT_PREVIEW_FILE);
+
+  historyInvalidateStatsCache();
+  historyCurrentValid=false;
+
+  Serial.print(F("[IMPORT] Fast-Apply Fertig verarbeitet="));Serial.print(processed);
+  Serial.print(F(" OK="));Serial.print(ok);
+  Serial.print(F(" Fehler="));Serial.print(bad);
+  Serial.print(F(" Update="));Serial.print(updated);
+  Serial.print(F(" Append="));Serial.print(appended);
+  Serial.print(F(" automatisch="));Serial.print(derived);
+  Serial.print(F(" Nachfuellungen="));Serial.print(refills);
+  Serial.print(F(" Header="));Serial.print(headerOk?F("OK"):F("FEHLER"));
+  Serial.print(F(" Modus="));Serial.print(bulkAppend?F("BULK"):F("INDEX"));
+  Serial.print(F(" Zeit="));Serial.print(millis()-importApplyStartMs);Serial.println(F(" ms"));
+
+  webStreamBegin(F("CSV Import"));
+  webStreamNav(1);
+
+  String s;
+  s.reserve(480);
+  s=F("<div class='card'><h1>CSV Import abgeschlossen</h1><div class='grid'>"
+      "<div class='metric-card'><h3>Uebernommen</h3><div>");
+  s+=String(ok);
+  s+=F("</div></div><div class='metric-card'><h3>Verworfen</h3><div>");
+  s+=String(bad);
+  s+=F("</div></div><div class='metric-card'><h3>Aktualisiert</h3><div>");
+  s+=String(updated);
+  s+=F("</div></div><div class='metric-card'><h3>Neu</h3><div>");
+  s+=String(appended);
+  s+=F("</div></div><div class='metric-card'><h3>Automatisch berechnet</h3><div>");
+  s+=String(derived);
+  s+=F("</div></div><div class='metric-card'><h3>Nachfuellungen erkannt</h3><div>");
+  s+=String(refills);
+  s+=F("</div></div><div class='metric-card'><h3>Importmodus</h3><div>");
+  s+=bulkAppend?F("BULK"):F("INDEX");
+  s+=F("</div></div><div class='metric-card'><h3>Dauer</h3><div>");
+  s+=String(millis()-importApplyStartMs);
+  s+=F(" ms</div></div></div>");
+  if(!bulkAppend && indexed==0 && appended>0){
+    s+=F("<p style='color:#ffb52e'><b>Hinweis:</b> Ältere Daten wurden zu einer bereits neueren History hinzugefügt. "
+         "Unter Wartung bitte einmal <b>Chronologie normalisieren / reparieren</b> ausführen.</p>");
+  }
+  if(!headerOk)s+=F("<p class='bad'>Warnung: History-Header konnte nicht gespeichert werden.</p>");
+  s+=F("<div class='links' style='margin-top:14px'><a class='btn' href='/history'>Zur Historie</a></div></div>");
+  server.sendContent(s);
+  webStreamEnd();
+}
+
+void handleHistoryImportCancel(){
+  LittleFS.remove(HISTORY_IMPORT_PREVIEW_FILE);
+  server.sendHeader("Location","/history",true);
+  server.send(303,"text/plain","");
+}
+
+uint32_t historyCountSource(uint8_t source){
+  if(!historyReady || historyHeader.count==0)return 0;
+
+  File f=LittleFS.open(HISTORY_FILE,"r");
+  if(!f)return 0;
+
+  const uint32_t oldest=historyOldestPhysicalIndex();
+  uint32_t count=0;
+
+  for(uint32_t li=0;li<historyHeader.count;li++){
+    const uint32_t physical=(oldest+li)%historyHeader.capacity;
+    DailyHistoryRecord r;
+    if(historyReadRecordFromOpenFile(f,physical,r) && r.source==source)count++;
+    if((li&0x7F)==0)yield();
+  }
+
+  f.close();
+  return count;
+}
+
+bool historyDeleteSource(uint8_t source,uint32_t& removed){
+  removed=0;
+  if(!historyReady)return false;
+  if(historyHeader.count==0)return true;
+
+  File src=LittleFS.open(HISTORY_FILE,"r");
+  if(!src)return false;
+
+  LittleFS.remove(HISTORY_FILTER_TMP_FILE);
+  File tmp=LittleFS.open(HISTORY_FILTER_TMP_FILE,"w+");
+  if(!tmp){
+    src.close();
+    return false;
+  }
+
+  HistoryHeader newHeader=historyHeader;
+  newHeader.count=0;
+  newHeader.writeIndex=0;
+  newHeader.crc=historyHeaderCrc(newHeader);
+
+  if(tmp.write(reinterpret_cast<const uint8_t*>(&newHeader),sizeof(newHeader))!=sizeof(newHeader)){
+    src.close();tmp.close();
+    LittleFS.remove(HISTORY_FILTER_TMP_FILE);
+    return false;
+  }
+
+  const uint32_t oldest=historyOldestPhysicalIndex();
+  uint32_t kept=0;
+
+  for(uint32_t li=0;li<historyHeader.count;li++){
+    const uint32_t physical=(oldest+li)%historyHeader.capacity;
+    DailyHistoryRecord r;
+
+    if(!historyReadRecordFromOpenFile(src,physical,r)){
+      removed++;
+      continue;
+    }
+
+    if(r.source==source){
+      removed++;
