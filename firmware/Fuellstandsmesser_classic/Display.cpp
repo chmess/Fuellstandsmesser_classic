@@ -55,9 +55,10 @@ void drawTankBar(int x, int y, int w, int h, float pct) {
 }
 
 void drawDisplayPageMain() {
+  // Page 1: maximize readability of the two most important values.
   lcd.setTextSize(1);
   lcdCursor(0, 0);
-  lcd.print(F("TANK"));
+  lcd.print(TR("TANK","TANK"));
 
   if (isfinite(tankPercent)) {
     lcdCursor(28, 0);
@@ -70,12 +71,16 @@ void drawDisplayPageMain() {
 
   lcd.setTextSize(2);
   lcdCursor(0, 11);
-  if (isfinite(tankLiters)) lcd.print(tankLiters, 0);
-  else lcd.print(F("----"));
+  if (isfinite(tankLiters)) {
+    lcd.print(tankLiters, 0);
+  } else {
+    lcd.print(F("----"));
+  }
 
   lcd.setTextSize(1);
   lcd.print(F("L"));
 
+  // Bottom line contains only the two technically relevant values.
   lcdCursor(0, 34);
   lcd.print(F("H"));
   if (isfinite(tankHeightNowMm)) lcd.print(tankHeightNowMm, 0);
@@ -87,6 +92,7 @@ void drawDisplayPageMain() {
   if (isfinite(filteredDistanceMm)) lcd.print(filteredDistanceMm, 0);
   else lcd.print(F("--"));
 
+  // Small horizontal level indicator across the full width.
   const int x=1,y=44,w=82,h=4;
   lcd.drawRect(x,y,w,h,BLACK);
   if(isfinite(tankPercent)){
@@ -96,14 +102,18 @@ void drawDisplayPageMain() {
 }
 
 void drawDisplayPageSensor() {
+  // Page 2: filtered value large, diagnostics small.
   lcd.setTextSize(1);
   lcdCursor(0, 0);
   lcd.print(sensorName(activeSensorType));
 
   lcd.setTextSize(2);
   lcdCursor(0, 11);
-  if (isfinite(filteredDistanceMm)) lcd.print(filteredDistanceMm, 0);
-  else lcd.print(F("---"));
+  if (isfinite(filteredDistanceMm)) {
+    lcd.print(filteredDistanceMm, 0);
+  } else {
+    lcd.print(F("---"));
+  }
 
   lcd.setTextSize(1);
   lcd.print(F("mm"));
@@ -124,20 +134,25 @@ void drawDisplayPageSensor() {
 }
 
 void drawDisplayPageNetwork() {
+  // Page 3: connection status at a glance.
   lcd.setTextSize(1);
   lcdCursor(0, 0);
-  lcd.print(F("NETZ"));
+  lcd.print(TR("NETZ","NETWORK"));
 
   lcdCursor(34, 0);
-  if (WiFi.status() == WL_CONNECTED) lcd.print(F("WIFI OK"));
+  if (WiFi.status() == WL_CONNECTED) lcd.print(TR("WIFI OK","WIFI OK"));
   else if (apMode) lcd.print(F("AP"));
   else lcd.print(F("WIFI --"));
 
   lcd.setTextSize(1);
   lcdCursor(0, 12);
-  if (WiFi.status() == WL_CONNECTED) lcd.print(WiFi.localIP().toString());
-  else if (apMode) lcd.print(WiFi.softAPIP().toString());
-  else lcd.print(F("keine IP"));
+  if (WiFi.status() == WL_CONNECTED) {
+    lcd.print(WiFi.localIP().toString());
+  } else if (apMode) {
+    lcd.print(WiFi.softAPIP().toString());
+  } else {
+    lcd.print(TR("keine IP","no IP"));
+  }
 
   lcdCursor(0, 25);
   lcd.print(F("RSSI "));
@@ -150,31 +165,31 @@ void drawDisplayPageNetwork() {
 
   lcdCursor(0, 38);
   lcd.print(F("MQTT "));
-  if (!cfg.mqttEnabled) lcd.print(F("AUS"));
+  if (!cfg.mqttEnabled) lcd.print(TR("AUS","OFF"));
   else lcd.print(mqttClient.connected() ? F("OK") : F("--"));
 
   lcdCursor(52, 38);
   lcd.print(F("AP "));
-  lcd.print(apMode ? F("AN") : F("AUS"));
+  lcd.print(apMode ? TR("AN","ON") : TR("AUS","OFF"));
 }
 
 void drawDisplayPageClimate(){
   lcd.setTextSize(1);
   lcdCursor(0,0);
-  lcd.print(F("KLIMA AHT10"));
+  lcd.print(TR("KLIMA AHT10","CLIMATE AHT10"));
 
   if(!ahtOk){
     lcdCursor(0,14);
-    lcd.print(F("Sensor --"));
+    lcd.print(TR("Sensor --","Sensor --"));
     lcdCursor(0,27);
     lcd.print(F("I2C 0x38"));
     lcdCursor(0,40);
-    lcd.print(F("Recovery aktiv"));
+    lcd.print(TR("Recovery aktiv","Recovery active"));
     return;
   }
 
   lcdCursor(0,13);
-  lcd.print(F("TEMP "));
+  lcd.print(TR("TEMP ","TEMP "));
   lcd.setTextSize(2);
   lcd.print(ahtTemperatureC,1);
   lcd.setTextSize(1);
@@ -186,7 +201,7 @@ void drawDisplayPageClimate(){
   lcd.print(F("%"));
 
   lcdCursor(0,41);
-  lcd.print(F("TAU "));
+  lcd.print(TR("TAU ","DEW "));
   lcd.print(ahtDewPointC,1);
   lcd.print(F("C "));
 
@@ -195,9 +210,10 @@ void drawDisplayPageClimate(){
 }
 
 void drawDisplayPageSystem() {
+  // Page 4: compact health display.
   lcd.setTextSize(1);
   lcdCursor(0, 0);
-  lcd.print(F("SYSTEM "));
+  lcd.print(TR("SYSTEM ","SYSTEM "));
   lcd.print(FW_VERSION);
 
   lcdCursor(0, 12);
@@ -229,7 +245,7 @@ void drawDisplayPageSystem() {
   lcd.print(F("W "));
   lcd.print(WiFi.status()==WL_CONNECTED ? F("OK") : F("--"));
   lcd.print(F(" M "));
-  lcd.print(cfg.mqttEnabled ? (mqttClient.connected()?F("OK"):F("--")) : F("AUS"));
+  lcd.print(cfg.mqttEnabled ? (mqttClient.connected()?F("OK"):F("--")) : TR("AUS","OFF"));
 
   lcdCursor(58, 37);
   lcd.print(F("S "));
@@ -242,11 +258,11 @@ void drawDisplayContent() {
 
   if (!sensorOk) {
     lcdCursor(0, 0);
-    lcd.print(F("SENSOR FEHLER"));
+    lcd.print(TR("SENSOR FEHLER","SENSOR ERROR"));
     lcdCursor(0, 12);
     lcd.print(F("I2C 0x29"));
     lcdCursor(0, 24);
-    lcd.print(F("Recovery aktiv"));
+    lcd.print(TR("Recovery aktiv","Recovery active"));
     lcdCursor(0, 38);
     if (WiFi.status() == WL_CONNECTED) lcd.print(WiFi.localIP().toString());
     else if (apMode) lcd.print(WiFi.softAPIP().toString());
@@ -265,16 +281,19 @@ void drawDisplayContent() {
 void drawDisplay() {
   lcd.clearDisplay();
 
+  // Normal: one pass.
   lcdTextXOffset = 0;
   lcdTextYOffset = 0;
   drawDisplayContent();
 
+  // Bold: additional horizontal pass.
   if (cfg.displayFontWeight >= 1) {
     lcdTextXOffset = 1;
     lcdTextYOffset = 0;
     drawDisplayContent();
   }
 
+  // Extra bold: additional vertical pass.
   if (cfg.displayFontWeight >= 2) {
     lcdTextXOffset = 0;
     lcdTextYOffset = 1;
