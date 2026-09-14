@@ -742,3 +742,249 @@ void handleSettings() {
     "<g id='cfgRectShape'><rect x='68' y='22' width='124' height='150' rx='28' fill='url(#cfgBody)' stroke='#52606c' stroke-width='3'/>"
     "<rect x='78' y='34' width='104' height='126' rx='18' fill='#172027'/><rect x='80' y='98' width='100' height='60' fill='url(#cfgOil)'/>"
     "<rect x='84' y='174' width='18' height='22' rx='3' fill='#6f7d89'/><rect x='158' y='174' width='18' height='22' rx='3' fill='#6f7d89'/></g>"
+    "<g id='cfgCylShape' style='display:none'><rect x='30' y='56' width='200' height='106' rx='52' fill='url(#cfgBody)' stroke='#52606c' stroke-width='3'/>"
+    "<rect x='40' y='66' width='180' height='86' rx='42' fill='#172027'/><path d='M40 109 H220 V152 H40 Z' fill='url(#cfgOil)'/>"
+    "<rect x='64' y='164' width='22' height='18' rx='3' fill='#6f7d89'/><rect x='174' y='164' width='22' height='18' rx='3' fill='#6f7d89'/></g>"
+    "<text x='130' y='208' text-anchor='middle' fill='#9fb0bd' font-size='11' id='cfgShapeName'>Quader / Batterietank</text>"
+    "</svg>"
+    "<div class='tankCalc'><div class='metric'>Kapazität<b id='cfgCapacity'>-- L</b></div>"
+    "<div class='metric'>Tankfaktor<b id='cfgFactor'>-- L/mm</b></div></div>"
+    "</div></div></div>"
+  ));
+
+  server.sendContent(F(
+    "<div class='settingsBlock'><h2>Messung</h2><p>Filter- und Messgrenzen.</p>"
+    "<label>Messintervall ms</label><input type='number' name='interval' value='"
+  ));
+  webSendUInt(cfg.measurementIntervalMs);
+  server.sendContent(F("'><label>Min Abstand mm</label><input type='number' name='minD' value='"));
+  webSendUInt(cfg.minDistanceMm);
+  server.sendContent(F("'><label>Max Abstand mm</label><input type='number' name='maxD' value='"));
+  webSendUInt(cfg.maxDistanceMm);
+  server.sendContent(F("'><label>Max. Sprung mm</label><input type='number' name='jump' value='"));
+  webSendUInt(cfg.maxJumpMm);
+  server.sendContent(F("'></div>"));
+
+  server.sendContent(F(
+    "<div class='settingsBlock'><h2>Display</h2><p>Nokia 5110 / PCD8544.</p>"
+    "<label>Kontrast: <b id='displayContrastValue'>"
+  ));
+  webSendUInt(cfg.displayContrast);
+  server.sendContent(F("</b></label><input id='displayContrast' name='displayContrast' type='range' min='20' max='100' step='1' value='"));
+  webSendUInt(cfg.displayContrast);
+  server.sendContent(F("' oninput=\"document.getElementById('displayContrastValue').textContent=this.value\">"));
+
+  server.sendContent(F("<label><input class='inlineCheck' type='checkbox' name='displayAutoRotate'"));
+  if(cfg.displayAutoRotate) server.sendContent(F(" checked"));
+  server.sendContent(F(">Seiten automatisch wechseln</label>"));
+
+  server.sendContent(F("<label>Seiten im Auto-Wechsel</label><div class='checkGrid'>"));
+  server.sendContent(F("<label><input class='inlineCheck' type='checkbox' name='displayAutoPage0'"));
+  if(cfg.displayPageMask & 0x01) server.sendContent(F(" checked"));
+  server.sendContent(F(">1 · Füllstand</label>"));
+
+  server.sendContent(F("<label><input class='inlineCheck' type='checkbox' name='displayAutoPage1'"));
+  if(cfg.displayPageMask & 0x02) server.sendContent(F(" checked"));
+  server.sendContent(F(">2 · Sensor</label>"));
+
+  server.sendContent(F("<label><input class='inlineCheck' type='checkbox' name='displayAutoPage2'"));
+  if(cfg.displayPageMask & 0x04) server.sendContent(F(" checked"));
+  server.sendContent(F(">3 · Netzwerk</label>"));
+
+  server.sendContent(F("<label><input class='inlineCheck' type='checkbox' name='displayAutoPage3'"));
+  if(cfg.displayPageMask & 0x08) server.sendContent(F(" checked"));
+  server.sendContent(F(">4 · System</label>"));
+
+  server.sendContent(F("<label><input class='inlineCheck' type='checkbox' name='displayAutoPage4'"));
+  if(cfg.displayPageMask & 0x10) server.sendContent(F(" checked"));
+  server.sendContent(F(">5 · Klima</label></div>"));
+
+  server.sendContent(F("<label>Seitenintervall: <b id='displayPageSecondsValue'>"));
+  webSendUInt(cfg.displayPageSeconds);
+  server.sendContent(F(" s</b></label><input id='displayPageSeconds' name='displayPageSeconds' type='range' min='2' max='60' step='1' value='"));
+  webSendUInt(cfg.displayPageSeconds);
+  server.sendContent(F("' oninput=\"document.getElementById('displayPageSecondsValue').textContent=this.value+' s'\">"));
+
+  server.sendContent(F("<label>Schriftstärke</label><select name='displayFontWeight'><option value='0'"));
+  if(cfg.displayFontWeight==0) server.sendContent(F(" selected"));
+  server.sendContent(F(">Normal</option><option value='1'"));
+  if(cfg.displayFontWeight==1) server.sendContent(F(" selected"));
+  server.sendContent(F(">Fett</option><option value='2'"));
+  if(cfg.displayFontWeight==2) server.sendContent(F(" selected"));
+  server.sendContent(F(">Extra-Fett</option></select>"));
+
+  server.sendContent(F("<label><input class='inlineCheck' type='checkbox' name='displayInvert'"));
+  if(cfg.displayInvert) server.sendContent(F(" checked"));
+  server.sendContent(F(">Anzeige invertieren</label>"));
+
+  server.sendContent(F(
+    "<label>Displayseite manuell wählen</label>"
+    "<div class='displayPages'>"
+    "<button type='button' class='displayPageBtn' data-page='0'>1 · Füllstand</button>"
+    "<button type='button' class='displayPageBtn' data-page='1'>2 · Sensor</button>"
+    "<button type='button' class='displayPageBtn' data-page='2'>3 · Netzwerk</button>"
+    "<button type='button' class='displayPageBtn' data-page='3'>4 · System</button>"
+    "</div><div id='displayPageStatus' class='displayPageStatus'>Aktuelle Seite: --</div>"
+    "</div>"
+  ));
+
+  server.sendContent(F(
+    "<div class='settingsBlock settingsWide'><h2>MQTT</h2>"
+    "<p>Kompatibilität: <b>average = Liter</b>, <b>fuellhoehe = gefilterter Sensorabstand mm</b>.</p>"
+    "<label><input class='inlineCheck' type='checkbox' name='mqtt'"
+  ));
+  if(cfg.mqttEnabled) server.sendContent(F(" checked"));
+  server.sendContent(F(">MQTT aktiv</label><div class='grid'><div><label>Broker</label><input name='mhost' value='"));
+  webSendSafe(String(cfg.mqttHost));
+  server.sendContent(F("'><label>Port</label><input type='number' name='mport' value='"));
+  webSendUInt(cfg.mqttPort);
+  server.sendContent(F("'><label>Benutzer</label><input name='muser' value='"));
+  webSendSafe(String(cfg.mqttUser));
+  server.sendContent(F("'><label>Passwort</label><input type='password' name='mpass' value='"));
+  webSendSafe(String(cfg.mqttPass));
+  server.sendContent(F("'></div><div><label>Basis-Topic</label><input name='mbase' value='"));
+  webSendSafe(String(cfg.mqttBase));
+  server.sendContent(F("'><label>Liter-Topic</label><input name='mavg' value='"));
+  webSendSafe(String(cfg.mqttAverageTopic));
+  server.sendContent(F("'><label>Fuellhoehe-Topic</label><input name='mheight' value='"));
+  webSendSafe(String(cfg.mqttFuellhoeheTopic));
+  server.sendContent(F(
+    "'></div></div>"
+    "<p class='tankHint'>Home-Assistant-Discovery ist deaktiviert. Die normalen MQTT-Topics bleiben aktiv.</p>"
+    "</div>"
+  ));
+
+  server.sendContent(F(
+    "<div class='settingsActions'>"
+    "<button type='submit'>Speichern & Neustarten</button>"
+    "<a class='btn danger' href='/factory-reset' onclick=\"return confirm('Werkseinstellungen wirklich laden?')\">Werkseinstellungen</a>"
+    "</div>"
+    "</div></form>"
+  ));
+
+  server.sendContent(R"JS(
+<script>
+(function(){
+const $=i=>document.getElementById(i);
+const n=i=>Math.max(0,Number($(i)?.value)||0);
+
+function updateTankConfigPreview(){
+  const g=$('tankGeometry');
+  if(!g)return;
+  const cyl=g.value==='1';
+  const L=n('tankLength'),W=n('tankWidth'),H=n('tankHeight'),D=n('tankDiameter');
+  let liters=0;
+
+  $('cfgRectShape').style.display=cyl?'none':'';
+  $('cfgCylShape').style.display=cyl?'':'none';
+  $('cfgShapeName').textContent=cyl?'Zylindertank':'Quader / Batterietank';
+  $('dimLength').className=cyl?'dimMuted':'dimActive';
+  $('dimWidth').className=cyl?'dimMuted':'dimActive';
+  $('dimDiameter').className=cyl?'dimActive':'dimMuted';
+  $('dimHeight').className='dimActive';
+
+  if(cyl){
+    const r=D/2000.0;
+    liters=Math.PI*r*r*(H/1000.0)*1000.0;
+    $('tankHeightLabel').textContent='Zylinderlänge / Tankhöhe mm';
+    $('tankFormulaHint').textContent='Zylinder: π × (Durchmesser/2)² × Tankhöhe.';
+  }else{
+    liters=(L/1000.0)*(W/1000.0)*(H/1000.0)*1000.0;
+    $('tankHeightLabel').textContent='Tankhöhe mm';
+)JS");
+  server.sendContent(R"JS(
+    $('tankFormulaHint').textContent='Quader: Länge × Breite × Höhe.';
+  }
+
+  $('cfgCapacity').textContent=Math.round(liters).toLocaleString('de-DE')+' L';
+  $('cfgFactor').textContent=(H>0?liters/H:0).toFixed(2)+' L/mm';
+}
+
+['tankGeometry','tankLength','tankWidth','tankHeight','tankDiameter'].forEach(id=>{
+  const e=$(id);
+  if(!e)return;
+  e.addEventListener('input',updateTankConfigPreview);
+  e.addEventListener('change',updateTankConfigPreview);
+});
+
+const displayPageNames=['Füllstand','Sensor','Netzwerk','System'];
+
+function setDisplayPageUi(page){
+  page=Number(page)||0;
+  document.querySelectorAll('.displayPageBtn').forEach(b=>{
+    b.classList.toggle('active',Number(b.dataset.page)===page);
+  });
+  const st=$('displayPageStatus');
+  if(st)st.textContent='Aktuelle Seite: '+(page+1)+' · '+(displayPageNames[page]||'--');
+}
+
+async function selectDisplayPage(page){
+  const st=$('displayPageStatus');
+  if(st)st.textContent='Display wird umgeschaltet …';
+  try{
+    const r=await fetch('/api/display/page',{
+      method:'POST',
+)JS");
+  server.sendContent(R"JS(
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:'page='+encodeURIComponent(page)
+    });
+    const j=await r.json();
+    if(!r.ok||!j.ok)throw new Error(j.error||('HTTP '+r.status));
+    setDisplayPageUi(j.page);
+  }catch(e){
+    if(st)st.textContent='Seitenwechsel fehlgeschlagen';
+  }
+}
+
+document.querySelectorAll('.displayPageBtn').forEach(b=>{
+  b.addEventListener('click',()=>selectDisplayPage(Number(b.dataset.page)));
+});
+
+async function loadDisplayPage(){
+  try{
+    const r=await fetch('/api/status?display=1&x='+Date.now(),{cache:'no-store'});
+    if(!r.ok)return;
+    const j=await r.json();
+    setDisplayPageUi(j.display_page||0);
+  }catch(e){}
+}
+
+updateTankConfigPreview();
+loadDisplayPage();
+})();
+</script>
+)JS");
+
+  webStreamEnd();
+}
+
+void copyArg(const char* name, char* dst, size_t len) {
+  if (!server.hasArg(name)) return;
+  String v = server.arg(name);
+  v.trim();
+  strlcpy(dst, v.c_str(), len);
+}
+
+void handleSave() {
+  copyArg("ssid", cfg.wifiSsid, sizeof(cfg.wifiSsid));
+  copyArg("wpass", cfg.wifiPass, sizeof(cfg.wifiPass));
+
+  long sensorSel = server.arg("sensor").toInt();
+  if (sensorSel < 0) sensorSel = 0;
+  if (sensorSel > 2) sensorSel = 2;
+  cfg.sensorType = (uint8_t)sensorSel;
+  cfg.sensorOffsetMm = server.arg("offset").toInt();
+
+  cfg.ahtEnabled = server.hasArg("ahtEnabled");
+  cfg.ahtTemperatureOffsetC = server.arg("ahtTempOffset").toFloat();
+  cfg.ahtHumidityOffsetPercent = server.arg("ahtHumOffset").toFloat();
+  long ahtIntervalS = server.arg("ahtIntervalS").toInt();
+  if(ahtIntervalS < 2)ahtIntervalS=2;
+  if(ahtIntervalS > 300)ahtIntervalS=300;
+  cfg.ahtIntervalMs=(uint32_t)ahtIntervalS*1000UL;
+
+  cfg.emptyDistanceMm = server.arg("empty").toFloat();
+  cfg.fullDistanceMm = server.arg("full").toFloat();
+
+  long geometrySel = server.arg("geometry").toInt();
