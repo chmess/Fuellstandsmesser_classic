@@ -1,22 +1,7 @@
 # Release Notes – V0.12.0
 
-V0.12.0 markiert den Abschluss der großen C++-Modularisierung.
+## Deutsch
+V0.12.0 markiert den Abschluss der großen C++-Modularisierung: monolithischer Arduino-Sketch in Module aufgeteilt, Konstanten zentralisiert, Sensorik/Messung/Display/WLAN/MQTT/History/Web/Runtime getrennt und GitHub-Dokumentation ergänzt. MQTT `average`, `fuellhoehe`, Config V7 und History V3 blieben kompatibel.
 
-## Schwerpunkte
-
-- monolithischen Arduino-Sketch in getrennte Module aufgeteilt
-- Konstanten zentralisiert
-- Sensorik, Messung, Display, WLAN, MQTT, History, Web und Runtime klar getrennt
-- bestehende Runtime-Funktionalität bewusst erhalten
-- GitHub-Dokumentation und Verdrahtungsplan ergänzt
-
-## Kompatibilität
-
-- MQTT `average` bleibt Tankinhalt in Litern
-- MQTT `fuellhoehe` bleibt gefilterter Sensorabstand in mm
-- Config V7 bleibt erhalten
-- History V3 bleibt erhalten
-
-## RAM
-
-ESP8266-RAM bleibt ein zentraler Grenzwert. Die Systemseite stellt Heap-Minimum, größten freien Block und Fragmentierung dar.
+## English
+V0.12.0 marks completion of the major C++ modularization: the monolithic Arduino sketch was split into modules, constants were centralized, sensors/measurement/display/Wi-Fi/MQTT/history/web/runtime were separated, and GitHub documentation was added. MQTT `average`, `fuellhoehe`, Config V7 and History V3 remained compatible.
