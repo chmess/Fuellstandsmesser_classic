@@ -1,5 +1,6 @@
 #include "WifiManager.h"
 #include "AppTypes.h"
+#include "Language.h"
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -20,7 +21,7 @@ void startAp() {
 
   apMode = true;
 
-  String ssid = "Fuellstandsmesser_classic-";
+  String ssid = "FuellstandClassic-";
   ssid += String(ESP.getChipId(), HEX);
 
   WiFi.mode(WIFI_AP_STA);
@@ -29,7 +30,7 @@ void startAp() {
   IPAddress ip = WiFi.softAPIP();
   dnsServer.start(53, "*", ip);
 
-  Serial.print(F("[AP] Fallback gestartet: "));
+  Serial.print(TR("[AP] Fallback gestartet: ","[AP] Fallback started: "));
   Serial.print(ssid);
   Serial.print(F(" @ "));
   Serial.println(ip);
@@ -42,10 +43,10 @@ void connectWifi() {
   }
 
   WiFi.mode(WIFI_STA);
-  WiFi.hostname("fuellstandsmesser_classic");
+  WiFi.hostname("fuellstand-classic");
   WiFi.begin(cfg.wifiSsid, cfg.wifiPass);
 
-  Serial.print(F("[WIFI] verbinde"));
+  Serial.print(TR("[WIFI] verbinde","[WIFI] connecting"));
 
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < 15000UL) {
@@ -59,11 +60,11 @@ void connectWifi() {
     Serial.print(F("[WIFI] IP "));
     Serial.println(WiFi.localIP());
 
-    Serial.println(F("[MDNS] deaktiviert - Zugriff direkt per IP"));
+    Serial.println(TR("[MDNS] deaktiviert - Zugriff direkt per IP","[MDNS] disabled - access directly by IP"));
     return;
   }
 
-  Serial.println(F("[WIFI] STA fehlgeschlagen -> AP"));
+  Serial.println(TR("[WIFI] STA fehlgeschlagen -> AP","[WIFI] STA failed -> AP"));
   startAp();
 }
 
