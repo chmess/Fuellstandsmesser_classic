@@ -8,120 +8,88 @@
 
 ## Deutsch
 
-`Fuellstandsmesser_classic` ist ein kompakter, eigenständiger Füllstandsmesser für Heizöl- und andere Tanks auf Basis eines **ESP8266 D1 mini**. Unterstützt werden VL53L0X/VL53L1X, Nokia 5110, MQTT, Weboberfläche, Langzeit-Historie, CSV Import/Export und Web OTA.
+`Fuellstandsmesser_classic` ist ein kompakter, eigenständiger Füllstandsmesser für Heizöl- und andere Tanks auf Basis eines **ESP8266 D1 mini**. Die Firmware unterstützt **VL53L0X/VL53L1X ToF-Sensoren**, ein **Nokia-5110-Display**, **MQTT**, eine umfangreiche **Weboberfläche**, **Langzeit-Historie**, **CSV-Import/-Export**, **Web-OTA** und seit V0.12.3 eine **Compile-Time-Sprachauswahl**.
 
-> **Aktueller Entwicklungsstand:** V0.12.3 I18N FIX3  
-> **Sprachen:** Deutsch / Englisch, beim Kompilieren auswählbar  
-> **Zielhardware:** ESP8266 D1 mini
+> **Aktueller Stand:** V0.12.3 I18N FIX3  
+> **Zielhardware:** ESP8266 D1 mini  
+> **Oberflächensprachen:** Deutsch / Englisch, beim Kompilieren auswählbar
 
-### Sprache auswählen
+### Screenshots
 
-In `firmware/Fuellstandsmesser_classic/Language.h`:
+#### Dashboard
+<p align="center">
+  <img src="docs/images/dashboard.jpg" alt="Dashboard" width="92%">
+</p>
 
-```cpp
-#define APP_LANGUAGE LANGUAGE_DE
-```
+#### Historie
+<p align="center">
+  <img src="docs/images/history.jpg" alt="Historie" width="92%">
+</p>
 
-oder:
+#### Einstellungen
+<p align="center">
+  <img src="docs/images/settings.jpg" alt="Einstellungen" width="92%">
+</p>
 
-```cpp
-#define APP_LANGUAGE LANGUAGE_EN
-```
-
-Die sichtbaren Texte liegen getrennt in `languages/lang_de.h` und `languages/lang_en.h`. Weitere Sprachen können später ergänzt werden. MQTT-Topics, API-/JSON-Feldnamen sowie Config- und History-Formate bleiben sprachunabhängig.
-
-### Hardware
-
-| Gerät | Adresse | Anschluss |
-|---|---:|---|
-| VL53L0X / VL53L1X | `0x29` | SDA=D2 / SCL=D1 |
-| AHT10 optional | `0x38` | SDA=D2 / SCL=D1 |
-
-| Nokia 5110 | D1-mini-Pin |
-|---|---|
-| CLK | D5 |
-| DIN | D7 |
-| DC | D4 |
-| CS | D6 |
-| RST | D3 |
-
-### MQTT-Kompatibilität
-
-| Topic | Bedeutung |
-|---|---|
-| `average` | Tankinhalt in Litern |
-| `fuellhoehe` | gefilterter ToF-Sensorabstand in mm |
-
-`fuellhoehe` ist aus Kompatibilitätsgründen weiterhin der Sensorabstand, nicht die berechnete Flüssigkeitshöhe.
-
-### Installation
-
-Arduino IDE 2.x, ESP8266 Arduino Core 3.1.2 und die Libraries Adafruit GFX, Adafruit PCD8544, Adafruit VL53L0X, Adafruit VL53L1X und PubSubClient verwenden. Sketch: `firmware/Fuellstandsmesser_classic/Fuellstandsmesser_classic.ino`.
+#### System
+<p align="center">
+  <img src="docs/images/system.jpg" alt="System" width="92%">
+</p>
 
 ### Dokumentation
 
+- [Web UI](docs/WEB_UI.md)
 - [Hardware & Verdrahtung / Hardware & wiring](docs/HARDWARE.md)
 - [Installation & Build](docs/INSTALLATION.md)
 - [Architektur / Architecture](docs/ARCHITECTURE.md)
 - [Sprachen / Languages](docs/LANGUAGE.md)
-- [Web UI](docs/WEB_UI.md)
 - [MQTT](docs/MQTT.md)
 - [History & CSV](docs/HISTORY_CSV.md)
-- [CLI](docs/CLI.md)
+- [Serielle CLI / Serial CLI](docs/CLI.md)
 - [Fehlersuche / Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Sicherheit / Safety](docs/SAFETY.md)
-- [Changelog](CHANGELOG.md)
-
-### Sicherheit
-
-Die Weboberfläche besitzt keine allgemeine Benutzer-Authentifizierung. Gerät nur in einem vertrauenswürdigen LAN betreiben. Dieses Hobbyprojekt ist kein zertifiziertes Mess-, Sicherheits-, Alarm-, Überfüll-, Leckage- oder Überwachungssystem.
+- [Sicherheit & Haftung / Safety & liability](docs/SAFETY.md)
 
 ---
 
 ## English
 
-`Fuellstandsmesser_classic` is a compact standalone tank-level monitor for heating-oil and other tanks based on an **ESP8266 D1 mini**. It supports VL53L0X/VL53L1X, Nokia 5110, MQTT, a web interface, long-term history, CSV import/export and Web OTA.
+`Fuellstandsmesser_classic` is a compact standalone tank-level monitor for heating-oil and other tanks based on an **ESP8266 D1 mini**. The firmware supports **VL53L0X/VL53L1X ToF sensors**, a **Nokia 5110 display**, **MQTT**, a comprehensive **web interface**, **long-term history**, **CSV import/export**, **Web OTA**, and since V0.12.3 a **compile-time language selection**.
 
-> **Current development state:** V0.12.3 I18N FIX3  
-> **Languages:** German / English, selected at compile time  
-> **Target hardware:** ESP8266 D1 mini
+> **Current state:** V0.12.3 I18N FIX3  
+> **Target hardware:** ESP8266 D1 mini  
+> **UI languages:** German / English, selected at compile time
 
-### Select the language
+### Screenshots
 
-In `firmware/Fuellstandsmesser_classic/Language.h`:
+#### Dashboard
+<p align="center">
+  <img src="docs/images/dashboard.jpg" alt="Dashboard" width="92%">
+</p>
 
-```cpp
-#define APP_LANGUAGE LANGUAGE_DE
-```
+#### History
+<p align="center">
+  <img src="docs/images/history.jpg" alt="History" width="92%">
+</p>
 
-or:
+#### Settings
+<p align="center">
+  <img src="docs/images/settings.jpg" alt="Settings" width="92%">
+</p>
 
-```cpp
-#define APP_LANGUAGE LANGUAGE_EN
-```
+#### System
+<p align="center">
+  <img src="docs/images/system.jpg" alt="System" width="92%">
+</p>
 
-User-facing strings are separated into `languages/lang_de.h` and `languages/lang_en.h`. More languages can be added later. MQTT topics, API/JSON field names and Config/History formats remain language-independent.
+### Documentation
 
-### Hardware
-
-| Device | Address | Connection |
-|---|---:|---|
-| VL53L0X / VL53L1X | `0x29` | SDA=D2 / SCL=D1 |
-| optional AHT10 | `0x38` | SDA=D2 / SCL=D1 |
-
-### MQTT compatibility
-
-| Topic | Meaning |
-|---|---|
-| `average` | tank content in liters |
-| `fuellhoehe` | filtered ToF sensor distance in mm |
-
-For compatibility, `fuellhoehe` remains the sensor distance, not the calculated liquid height.
-
-### Installation
-
-Use Arduino IDE 2.x, ESP8266 Arduino Core 3.1.2 and the libraries Adafruit GFX, Adafruit PCD8544, Adafruit VL53L0X, Adafruit VL53L1X and PubSubClient. Sketch: `firmware/Fuellstandsmesser_classic/Fuellstandsmesser_classic.ino`.
-
-### Security
-
-The web interface has no general user authentication. Operate the device only on a trusted LAN. This hobby project is not a certified measurement, safety, alarm, overfill, leak-detection or monitoring system.
+- [Web UI](docs/WEB_UI.md)
+- [Hardware & wiring](docs/HARDWARE.md)
+- [Installation & Build](docs/INSTALLATION.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Languages](docs/LANGUAGE.md)
+- [MQTT](docs/MQTT.md)
+- [History & CSV](docs/HISTORY_CSV.md)
+- [Serial CLI](docs/CLI.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Safety & liability](docs/SAFETY.md)
