@@ -7,11 +7,18 @@
 #include <Adafruit_VL53L0X.h>
 #include <Adafruit_VL53L1X.h>
 
+// -----------------------------------------------------------------------------
+// Dependencies owned by the main application state.
+// Only declarations live here; storage still exists exactly once in the sketch.
+// -----------------------------------------------------------------------------
 extern Config cfg;
+
 extern Adafruit_VL53L0X vl53l0x;
 extern Adafruit_VL53L1X vl53l1x;
+
 extern bool sensorOk;
 extern uint8_t activeSensorType;
+
 extern bool ahtOk;
 extern bool ahtInitialized;
 extern float ahtTemperatureC;
@@ -32,6 +39,13 @@ bool i2cPresent(uint8_t addr);
 bool readReg8(uint8_t addr, uint8_t reg, uint8_t& v);
 bool readReg16(uint8_t addr, uint16_t reg, uint8_t& v);
 
+// Constants previously file-local in the main .ino.
+// Repeated here as compile-time constants with identical values.
+
+
+// -----------------------------------------------------------------------------
+// TOF
+// -----------------------------------------------------------------------------
 bool aht10Present(){
   Wire.beginTransmission(AHT10_ADDR);
   return Wire.endTransmission()==0;
@@ -41,6 +55,7 @@ float calculateDewPointMagnus(float temperatureC,float humidityPercent){
   if(!isfinite(temperatureC) || !isfinite(humidityPercent) ||
      humidityPercent<=0.0f || humidityPercent>100.0f)return NAN;
 
+  // Magnus approximation, matching the climate function of Fuellstandsmesser3.
   const float a=17.62f;
   const float b=243.12f;
   const float gamma=logf(humidityPercent/100.0f)+(a*temperatureC)/(b+temperatureC);
@@ -48,8 +63,8 @@ float calculateDewPointMagnus(float temperatureC,float humidityPercent){
 }
 
 const __FlashStringHelper* ahtStatusText(){
-  if(!cfg.ahtEnabled)return F("AUS");
-  if(ahtInitialized && lastAhtValidMs==0)return F("WARTET");
+  if(!cfg.ahtEnabled)return TR("AUS","OFF");
+  if(ahtInitialized && lastAhtValidMs==0)return TR("WARTET","WAITING");
   if(!ahtInitialized)return F("LOST");
   if(!ahtOk)return F("LOST");
   if((uint32_t)(millis()-lastAhtValidMs)>AHT_STALE_MS)return F("STALE");
@@ -71,14 +86,14 @@ bool initAht10(){
     return false;
   }
 
-  Serial.println(F("[AHT10] gefunden @ 0x38"));
+  Serial.println(TR("[AHT10] gefunden @ 0x38","[AHT10] found @ 0x38"));
 
   Wire.beginTransmission(AHT10_ADDR);
   Wire.write(0xBA);
   if(Wire.endTransmission()!=0){
     ahtInitialized=false;
     ahtOk=false;
-    Serial.println(F("[AHT10] Soft-Reset FEHLER"));
+    Serial.println(TR("[AHT10] Soft-Reset FEHLER","[AHT10] soft reset ERROR"));
     return false;
   }
   delay(25);
@@ -91,7 +106,7 @@ bool initAht10(){
   if(Wire.endTransmission()!=0){
     ahtInitialized=false;
     ahtOk=false;
-    Serial.println(F("[AHT10] Init FEHLER"));
+    Serial.println(TR("[AHT10] Init FEHLER","[AHT10] init ERROR"));
     return false;
   }
 
@@ -102,7 +117,7 @@ bool initAht10(){
   ahtOk=false;
   ahtConsecutiveErrors=0;
 
-  Serial.print(F("[AHT10] initialisiert | warte auf gueltige Messung | Offset T="));
+  Serial.print(TR("[AHT10] initialisiert | warte auf gueltige Messung | Offset T=","[AHT10] initialized | waiting for valid reading | Offset T="));
   Serial.print(cfg.ahtTemperatureOffsetC,1);
   Serial.print(F(" C RH="));
   Serial.print(cfg.ahtHumidityOffsetPercent,1);
@@ -117,7 +132,7 @@ bool readAht10(){
 
   if(!aht10Present()){
     const bool wasPresent=ahtInitialized || ahtOk;
-    if(wasPresent)Serial.println(F("[AHT10] LOST: kein ACK @ 0x38"));
+    if(wasPresent)Serial.println(TR("[AHT10] LOST: kein ACK @ 0x38","[AHT10] LOST: no ACK @ 0x38"));
     ahtInitialized=false;
     ahtOk=false;
     ahtTemperatureC=NAN;
@@ -139,7 +154,7 @@ bool readAht10(){
     ahtOk=false;
     if(ahtConsecutiveErrors<255)ahtConsecutiveErrors++;
     ahtErrorCount++;
-    Serial.println(F("[AHT10] Trigger FEHLER"));
+    Serial.println(TR("[AHT10] Trigger FEHLER","[AHT10] trigger ERROR"));
     return false;
   }
 
@@ -153,7 +168,7 @@ bool readAht10(){
     ahtOk=false;
     if(ahtConsecutiveErrors<255)ahtConsecutiveErrors++;
     ahtErrorCount++;
-    Serial.println(F("[AHT10] Read FEHLER: zu wenig Bytes"));
+    Serial.println(TR("[AHT10] Read FEHLER: zu wenig Bytes","[AHT10] read ERROR: too few bytes"));
     return false;
   }
 
@@ -163,7 +178,7 @@ bool readAht10(){
   if(d[0]&0x80){
     if(ahtConsecutiveErrors<255)ahtConsecutiveErrors++;
     ahtErrorCount++;
-    Serial.println(F("[AHT10] Messung noch BUSY"));
+    Serial.println(TR("[AHT10] Messung noch BUSY","[AHT10] reading still BUSY"));
     return false;
   }
 
@@ -183,7 +198,7 @@ bool readAht10(){
     ahtOk=false;
     if(ahtConsecutiveErrors<255)ahtConsecutiveErrors++;
     ahtErrorCount++;
-    Serial.print(F("[AHT10] Plausibilitaet FEHLER T="));
+    Serial.print(TR("[AHT10] Plausibilitaet FEHLER T=","[AHT10] plausibility ERROR T="));
     Serial.print(temperature,1);
     Serial.print(F(" H="));
     Serial.println(humidity,1);
@@ -245,7 +260,7 @@ bool initL0X() {
         false,
         &Wire,
         Adafruit_VL53L0X::VL53L0X_SENSE_DEFAULT)) {
-    Serial.println(F("[TOF] VL53L0X FEHLER"));
+    Serial.println(TR("[TOF] VL53L0X FEHLER","[TOF] VL53L0X ERROR"));
     return false;
   }
 
@@ -258,14 +273,14 @@ bool initL1X() {
   Serial.println(F("[TOF] init VL53L1X"));
 
   if (!vl53l1x.begin(VL53_ADDR, &Wire, false)) {
-    Serial.println(F("[TOF] VL53L1X FEHLER"));
+    Serial.println(TR("[TOF] VL53L1X FEHLER","[TOF] VL53L1X ERROR"));
     return false;
   }
 
   vl53l1x.setTimingBudget(50);
 
   if (!vl53l1x.startRanging()) {
-    Serial.println(F("[TOF] VL53L1X ranging FEHLER"));
+    Serial.println(TR("[TOF] VL53L1X ranging FEHLER","[TOF] VL53L1X ranging ERROR"));
     return false;
   }
 
@@ -279,7 +294,7 @@ bool initToF() {
   activeSensorType = SENSOR_AUTO;
 
   if (!i2cPresent(VL53_ADDR)) {
-    Serial.println(F("[TOF] 0x29 nicht gefunden"));
+    Serial.println(TR("[TOF] 0x29 nicht gefunden","[TOF] 0x29 not found"));
     return false;
   }
 
@@ -296,18 +311,18 @@ bool initToF() {
   uint8_t id = 0;
 
   if (readReg8(VL53_ADDR, 0xC0, id) && id == 0xEE) {
-    Serial.println(F("[TOF] erkannt: VL53L0X"));
+    Serial.println(TR("[TOF] erkannt: VL53L0X","[TOF] detected: VL53L0X"));
     sensorOk = initL0X();
     return sensorOk;
   }
 
   if (readReg16(VL53_ADDR, 0x010F, id) && id == 0xEA) {
-    Serial.println(F("[TOF] erkannt: VL53L1X"));
+    Serial.println(TR("[TOF] erkannt: VL53L1X","[TOF] detected: VL53L1X"));
     sensorOk = initL1X();
     return sensorOk;
   }
 
-  Serial.println(F("[TOF] ID unklar -> Treibertest"));
+  Serial.println(TR("[TOF] ID unklar -> Treibertest","[TOF] ID unclear -> driver test"));
 
   if (initL0X()) {
     sensorOk = true;
