@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Verbesserung oder neue Funktion vorschlagen
+about: Verbesserung vorschlagen / Suggest an improvement or new feature
 title: "[FEATURE] "
 labels: enhancement
 assignees: ""
@@ -8,8 +8,10 @@ assignees: ""
 
 ## Problem / Motivation
 
-## Vorschlag
+## Vorschlag / Proposal
 
-## Auswirkungen auf Hardware / RAM / Kompatibilität
+## Hardware / RAM / Kompatibilität / Compatibility impact
 
-## Zusätzliche Informationen
+## Sprache / Localization impact
+
+## Zusätzliche Informationen / Additional information
