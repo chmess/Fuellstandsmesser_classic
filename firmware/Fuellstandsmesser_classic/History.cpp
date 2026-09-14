@@ -110,7 +110,7 @@ void setupFilesystem() {
   if (fsMounted) {
     Serial.println(F("[FS] LittleFS gemountet"));
   } else {
-    Serial.println(F("[FS] LittleFS Mount FEHLER - KEIN Autoformat"));
+    Serial.println(F(LTXT_LOG_FS_MOUNT_ERROR));
   }
 
   printStorageDiagnostics();
@@ -310,7 +310,7 @@ bool historyMigrateV2ToV3(uint32_t newCapacity){
   }
   LittleFS.remove(HISTORY_V2_MIGRATE_BAK_FILE);
 
-  Serial.print(F("[HISTORY V3] Migration fertig migrated="));
+  Serial.print(F(LTXT_LOG_HISTORY_MIGRATION_DONE));
   Serial.print(migrated);
   Serial.print(F(" invalid="));
   Serial.println(invalid);
@@ -458,6 +458,7 @@ bool historyDaysAreAdjacent(uint32_t olderDayKey, uint32_t newerDayKey) {
   const time_t b=historyDayKeyToTime(newerDayKey);
   if(a<=0 || b<=0) return false;
   const long diff=(long)(b-a);
+  // Mittag->Mittag: auch Sommer-/Winterzeitwechsel tolerieren.
   return diff >= 20L*3600L && diff <= 28L*3600L;
 }
 
@@ -476,6 +477,9 @@ bool historyFindPreviousDay(uint32_t dayKey, DailyHistoryRecord& prev) {
     DailyHistoryRecord r;
     if(!historyReadRecordFromOpenFile(f,physical,r))continue;
     if(r.dayKey>=dayKey)continue;
+    // Test data is synthetic and must never provide the real daily baseline
+    // for consumption/refill calculations. Imported data, however, is considered
+    // real history and remains valid as a baseline.
     if(r.source==HISTORY_TEST)continue;
 
     if(!found || r.dayKey>best.dayKey){
@@ -504,13 +508,13 @@ void historyPrepareDayBaseline(uint32_t dayKey) {
     historyDayBaselineLiters=prev.levelLiters;
     historyDayBaselineValid=true;
 
-    Serial.print(F("[HISTORY] Tagesstart aus Vortag "));
+    Serial.print(F(LTXT_LOG_DAY_START_PREVIOUS));
     Serial.print(historyDateString(prev.dayKey));
     Serial.print(F(" = "));
     Serial.print(historyDayBaselineLiters);
     Serial.println(F(" L"));
   }else{
-    Serial.println(F("[HISTORY] Kein lueckenloser Vortag -> Tagesstart ab erster Messung"));
+    Serial.println(F(LTXT_LOG_NO_CONTIG_PREVIOUS));
   }
 }
 
@@ -527,6 +531,10 @@ void historyResetCurrentFromRecord(const DailyHistoryRecord& r,uint32_t physical
 }
 
 void historyStartNewDay(uint32_t dayKey,uint8_t source=HISTORY_MEASURED){
+  // DUPLICATE-DAY GUARD:
+  // Before reserving a new ring-buffer slot, always check whether this
+  // calendar day already exists. This prevents duplicate days after reboot,
+  // test-data generation, or import.
   DailyHistoryRecord existingRecord;
   int32_t existingIndex=historyFindDay(dayKey,&existingRecord);
 
@@ -580,7 +588,7 @@ void historyRecalcConsumption(DailyHistoryRecord& r) {
 
     if(!historyDayRefillConfirmed){
       historyDayRefillConfirmed=true;
-      Serial.print(F("[HISTORY] Nachfuellung bestaetigt +"));
+      Serial.print(F(LTXT_LOG_REFILL_CONFIRMED));
       Serial.print(historyDayMaxRiseLiters);
       Serial.println(F(" L"));
     }
@@ -592,6 +600,8 @@ void historyRecalcConsumption(DailyHistoryRecord& r) {
     r.consumptionLiters=(uint16_t)constrain((int)max((int32_t)0,cons),0,65535);
   }else{
     r.refillLiters=0;
+    // Small positive fluctuations below 150 L are not treated as a refill
+    // and are not counted as negative consumption either.
     const int32_t cons=start-end;
     r.consumptionLiters=(uint16_t)constrain((int)max((int32_t)0,cons),0,65535);
   }
@@ -603,9 +613,11 @@ void historyPromoteCurrentTestDayToMeasured(){
   const uint32_t dayKey=historyCurrent.dayKey;
   const uint32_t physicalIndex=historyCurrentIndex;
 
-  Serial.print(F("[HISTORY] Testtag -> reale Messung, Record wird neu aufgebaut: "));
+  Serial.print(F(LTXT_LOG_TEST_TO_REAL));
   Serial.println(historyDateString(dayKey));
 
+  // Recalculate the real baseline. Test data from the previous day is
+  // historyFindPreviousDay() bewusst ignoriert.
   historyPrepareDayBaseline(dayKey);
 
   memset(&historyCurrent,0,sizeof(historyCurrent));
@@ -621,6 +633,9 @@ void historyPromoteCurrentTestDayToMeasured(){
     historyCurrent.firstLiters=historyDayBaselineLiters;
     historyCurrent.flags|=HISTORY_FLAG_PREV_DAY_BASELINE;
   }
+
+  // The first subsequent real measurement sets firstLiters automatically
+  // if no real baseline exists. No refill is derived from the previous test value.
 }
 
 void historyAccumulateCurrent(){
@@ -654,7 +669,7 @@ void historyCheckpoint(bool force){
   historyLastCheckpointMs=nowMs;
   Serial.print(F("[HISTORY] Checkpoint "));Serial.print(historyDateString(historyCurrent.dayKey));
   Serial.print(F(" samples="));Serial.print(historyCurrent.samples);
-  Serial.println(ok?F(" OK"):F(" FEHLER"));
+  Serial.println(ok?F(" OK"):F(LTXT_LOG_ERROR_SUFFIX));
 }
 
 void historyOnMeasurement(){
@@ -665,6 +680,9 @@ void historyOnMeasurement(){
   if(!historyCurrentValid)historyStartNewDay(dayKey);
   else if(historyCurrent.dayKey!=dayKey){historyCheckpoint(true);historyStartNewDay(dayKey);}
 
+  // A current-day test record continued during boot must not be mixed with real
+  // measurements. The same physical daily record is cleanly converted
+  // to measured data without creating a second day.
   if(historyCurrentValid && historyCurrent.source==HISTORY_TEST){
     historyPromoteCurrentTestDayToMeasured();
   }
@@ -701,7 +719,7 @@ bool historyRepairIndexRead(File& idxFile,uint32_t slot,uint32_t& physicalIndex)
   return idxFile.read(reinterpret_cast<uint8_t*>(&physicalIndex),sizeof(physicalIndex))==sizeof(physicalIndex);
 }
 
-// Fast-Import verwendet dasselbe kompakte Dateindex-Format wie der
+// Fast import uses the same compact file-index format as the
 
 // Explicit C++ forward declarations replacing Arduino auto-prototypes.
 bool historyDateNow(uint32_t& dayKey);
@@ -711,6 +729,7 @@ uint32_t historyOldestPhysicalIndex();
 bool historyReadRecordFromOpenFile(File& f, uint32_t physicalIndex, DailyHistoryRecord& r);
 void setupFilesystem();
 
+// History repair: one uint32_t physical record index per calendar day.
 bool historyImportIndexCreate(File& idxFile,uint32_t slots){
   return historyRepairIndexCreate(idxFile,slots);
 }
@@ -738,10 +757,13 @@ bool historyIntegrityCheckAndRepair(){
 
   File src=LittleFS.open(HISTORY_FILE,"r");
   if(!src){
-    Serial.println(F("[HISTORY REPAIR] History-Datei nicht lesbar"));
+    Serial.println(F(LTXT_LOG_REPAIR_FILE_UNREADABLE));
     return false;
   }
 
+  // ---------------------------------------------------------------------------
+  // Pass 1: determine the valid date range and verify the structure.
+  // ---------------------------------------------------------------------------
   const uint32_t oldestPhysical=historyOldestPhysicalIndex();
   Serial.print(F("[HISTORY REPAIR] Phase 1 scan oldest="));
   Serial.println(oldestPhysical);
@@ -775,10 +797,11 @@ bool historyIntegrityCheckAndRepair(){
     if(ord<minOrd)minOrd=ord;
     if(ord>maxOrd)maxOrd=ord;
     validRecords++;
+
     if((li&0x1F)==0)yield();
   }
 
-  Serial.print(F("[HISTORY REPAIR] Phase 1 fertig valid="));
+  Serial.print(F(LTXT_LOG_REPAIR_PHASE1_DONE));
   Serial.print(validRecords);
   Serial.print(F(" invalid="));
   Serial.print(historyRepairInvalid);
@@ -790,7 +813,7 @@ bool historyIntegrityCheckAndRepair(){
 
   if(validRecords==0 || minOrd>maxOrd){
     src.close();
-    Serial.println(F("[HISTORY REPAIR] Keine gueltigen Records gefunden"));
+    Serial.println(F(LTXT_LOG_REPAIR_NO_VALID));
     return false;
   }
 
@@ -799,9 +822,10 @@ bool historyIntegrityCheckAndRepair(){
   Serial.println(slots);
   yield();
 
+  // Safety limit against a corrupted date range.
   if(slots>50000UL){
     src.close();
-    Serial.print(F("[HISTORY REPAIR] Datumsbereich unplausibel slots="));
+    Serial.print(F(LTXT_LOG_REPAIR_DATE_RANGE));
     Serial.println(slots);
     return false;
   }
@@ -810,7 +834,7 @@ bool historyIntegrityCheckAndRepair(){
   File idx=LittleFS.open(HISTORY_REPAIR_INDEX_FILE,"w+");
   if(!idx){
     src.close();
-    Serial.println(F("[HISTORY REPAIR] Index-Datei konnte nicht erstellt werden"));
+    Serial.println(F(LTXT_LOG_REPAIR_INDEX_CREATE));
     return false;
   }
 
@@ -824,7 +848,10 @@ bool historyIntegrityCheckAndRepair(){
     return false;
   }
 
-  Serial.println(F("[HISTORY REPAIR] Phase 3 Tagesindex aufbauen"));
+  // ---------------------------------------------------------------------------
+  // Pass 2: always remember the LAST valid record for each calendar day.
+  // ---------------------------------------------------------------------------
+  Serial.println(F(LTXT_LOG_REPAIR_BUILD_INDEX));
   yield();
 
   for(uint32_t li=0;li<historyHeader.count;li++){
@@ -859,7 +886,7 @@ bool historyIntegrityCheckAndRepair(){
   idx.flush();
   yield();
 
-  Serial.print(F("[HISTORY REPAIR] Phase 3 fertig duplicates="));
+  Serial.print(F(LTXT_LOG_REPAIR_PHASE3_DONE));
   Serial.println(historyRepairDuplicates);
 
   const bool needsRepair=
@@ -877,14 +904,17 @@ bool historyIntegrityCheckAndRepair(){
     return true;
   }
 
-  Serial.print(F("[HISTORY REPAIR] Reparatur notwendig duplicates="));
+  Serial.print(F(LTXT_LOG_REPAIR_REQUIRED));
   Serial.print(historyRepairDuplicates);
   Serial.print(F(" invalid="));
   Serial.print(historyRepairInvalid);
   Serial.print(F(" outOfOrder="));
   Serial.println(historyRepairOutOfOrder);
 
-  Serial.println(F("[HISTORY REPAIR] Phase 4 kompakte Datei schreiben"));
+  // ---------------------------------------------------------------------------
+  // Pass 3: rebuild the compact history in chronological order.
+  // ---------------------------------------------------------------------------
+  Serial.println(F(LTXT_LOG_REPAIR_WRITE_COMPACT));
   yield();
 
   LittleFS.remove(HISTORY_REPAIR_TMP_FILE);
@@ -892,7 +922,7 @@ bool historyIntegrityCheckAndRepair(){
   if(!tmp){
     src.close();idx.close();
     LittleFS.remove(HISTORY_REPAIR_INDEX_FILE);
-    Serial.println(F("[HISTORY REPAIR] Temp-Datei konnte nicht erstellt werden"));
+    Serial.println(F(LTXT_LOG_REPAIR_TEMP_CREATE));
     return false;
   }
 
@@ -946,7 +976,10 @@ bool historyIntegrityCheckAndRepair(){
   idx.close();
   tmp.close();
 
-  Serial.println(F("[HISTORY REPAIR] Phase 5 Dateien tauschen"));
+  // ---------------------------------------------------------------------------
+  // Replace the original only now.
+  // ---------------------------------------------------------------------------
+  Serial.println(F(LTXT_LOG_REPAIR_SWAP_FILES));
   yield();
 
   LittleFS.remove(HISTORY_REPAIR_BAK_FILE);
@@ -965,7 +998,6 @@ bool historyIntegrityCheckAndRepair(){
     Serial.println(F("[HISTORY REPAIR] Neue History konnte nicht aktiviert werden"));
     return false;
   }
-
   LittleFS.remove(HISTORY_REPAIR_BAK_FILE);
   LittleFS.remove(HISTORY_REPAIR_INDEX_FILE);
 
@@ -977,7 +1009,7 @@ bool historyIntegrityCheckAndRepair(){
   historyInvalidateStatsCache();
   historyRepairPerformed=true;
 
-  Serial.print(F("[HISTORY REPAIR] Fertig alt="));
+  Serial.print(F(LTXT_LOG_REPAIR_DONE_OLD));
   Serial.print(validRecords + historyRepairInvalid);
   Serial.print(F(" neu="));
   Serial.print(newCount);
@@ -990,7 +1022,7 @@ bool historyIntegrityCheckAndRepair(){
 void historySetupAfterFilesystem(){
   historyReady=false;historyCurrentValid=false;
   if(!fsMounted||!LittleFS.info(fsInfoCache)){
-    Serial.println(F("[HISTORY] deaktiviert: LittleFS nicht verfuegbar"));
+    Serial.println(F(LTXT_LOG_HISTORY_DISABLED_FS));
     return;
   }
 
@@ -1000,10 +1032,11 @@ void historySetupAfterFilesystem(){
     ?(usable-sizeof(HistoryHeader))/sizeof(DailyHistoryRecord):0;
 
   if(capacity<365){
-    Serial.println(F("[HISTORY] deaktiviert: zu wenig LittleFS"));
+    Serial.println(F(LTXT_LOG_HISTORY_DISABLED_SPACE));
     return;
   }
 
+  // Migrate V2 (24 B/day) once and atomically to V3 (32 B/day + climate).
   if(LittleFS.exists(HISTORY_FILE)){
     File probe=LittleFS.open(HISTORY_FILE,"r");
     if(probe){
@@ -1014,7 +1047,7 @@ void historySetupAfterFilesystem(){
          h.recordSize==sizeof(DailyHistoryRecordV2)){
         probe.close();
         if(!historyMigrateV2ToV3(capacity)){
-          Serial.println(F("[HISTORY V3] Migration FEHLER - alte History bleibt erhalten"));
+          Serial.println(F(LTXT_LOG_HISTORY_MIGRATION_ERROR));
           return;
         }
       }else{
@@ -1046,7 +1079,7 @@ void historySetupAfterFilesystem(){
   if(!valid){
     LittleFS.remove(HISTORY_FILE);
     File f=LittleFS.open(HISTORY_FILE,"w+");
-    if(!f){Serial.println(F("[HISTORY] Datei anlegen FEHLER"));return;}
+    if(!f){Serial.println(F(LTXT_LOG_HISTORY_CREATE_ERROR));return;}
     historyHeader.magic=HISTORY_MAGIC;
     historyHeader.version=HISTORY_VERSION;
     historyHeader.recordSize=sizeof(DailyHistoryRecord);
@@ -1057,25 +1090,25 @@ void historySetupAfterFilesystem(){
     bool ok=f.write(reinterpret_cast<const uint8_t*>(&historyHeader),sizeof(historyHeader))==sizeof(historyHeader);
     f.flush();f.close();
     if(!ok)return;
-    Serial.println(F("[HISTORY] neue History V3 mit Klima angelegt"));
+    Serial.println(F(LTXT_LOG_HISTORY_NEW_V3));
   }else{
-    Serial.println(F("[HISTORY] vorhandene History V3 geladen"));
+    Serial.println(F(LTXT_LOG_HISTORY_EXISTING_V3));
   }
 
   historyReady=true;
-  Serial.println(F("[HISTORY] Fast-Read aktiviert: Datei bleibt pro Auswertung offen"));
+  Serial.println(F(LTXT_LOG_HISTORY_FAST_READ));
   Serial.println(F("[HISTORY] Duplicate-Day Guard aktiv"));
   Serial.print(F("[HISTORY] version="));Serial.print(HISTORY_VERSION);
   Serial.print(F(" record="));Serial.print(sizeof(DailyHistoryRecord));
   Serial.print(F(" B capacity="));Serial.print(historyHeader.capacity);
-  Serial.print(F(" Tage (~"));Serial.print((float)historyHeader.capacity/365.25f,1);
-  Serial.print(F(" Jahre) count="));Serial.println(historyHeader.count);
-  Serial.println(F("[HISTORY] Klima: T avg/min/max + RH avg/min/max"));
-  Serial.println(F("[HISTORY] Integritaetscheck: manuell ueber Wartung"));
+  Serial.print(F(LTXT_LOG_DAYS_OPEN));Serial.print((float)historyHeader.capacity/365.25f,1);
+  Serial.print(F(LTXT_LOG_YEARS_COUNT));Serial.println(historyHeader.count);
+  Serial.println(F(LTXT_LOG_HISTORY_CLIMATE));
+  Serial.println(F(LTXT_LOG_HISTORY_INTEGRITY_MANUAL));
 }
 
 void historySetupTime(){
-  if(WiFi.status()!=WL_CONNECTED){Serial.println(F("[TIME] NTP wartet auf WLAN"));return;}
+  if(WiFi.status()!=WL_CONNECTED){Serial.println(F(LTXT_LOG_NTP_WAITS_WIFI));return;}
   setenv("TZ","CET-1CEST,M3.5.0,M10.5.0/3",1);tzset();
   configTime(0,0,"pool.ntp.org","time.nist.gov");
   Serial.println(F("[TIME] NTP gestartet"));
@@ -1083,7 +1116,7 @@ void historySetupTime(){
   while(time(nullptr)<1700000000&&millis()-start<5000UL){delay(100);yield();}
   uint32_t dayKey=0;
   if(historyDateNow(dayKey)){
-    historyTimeValid=true;Serial.print(F("[TIME] Datum "));Serial.println(historyDateString(dayKey));
+    historyTimeValid=true;Serial.print(F(LTXT_LOG_DATE_PREFIX));Serial.println(historyDateString(dayKey));
     DailyHistoryRecord r;
     int32_t p=historyFindDay(dayKey,&r);
     if(p>=0){
@@ -1133,11 +1166,14 @@ bool historyNewestRecordFromOpenFile(File& f,DailyHistoryRecord& out,uint32_t& l
 uint32_t historyFirstDayForDays(uint16_t days){
   if(days==0)return 0;
 
+  // Prefer the current system time.
   uint32_t anchorDay=0;
   if(historyDateNow(anchorDay)){
     return historyFirstDayForAnchor(anchorDay,days);
   }
 
+  // Fallback for AP operation without NTP:
+  // use the newest available history day as the time anchor.
   if(!historyReady || historyHeader.count==0)return 0;
 
   File f=LittleFS.open(HISTORY_FILE,"r");
@@ -1179,6 +1215,7 @@ bool historyChronologicalBoundsFromOpenFile(
       oldestRecord=r;
       oldestLogical=li;
     }
+    // For the same day, the record stored later wins.
     if(!have || r.dayKey>=maxDay){
       maxDay=r.dayKey;
       newestRecord=r;
@@ -1239,11 +1276,16 @@ void handleHistoryApi(){
 
   const uint32_t first=historyFirstDayForAnchor(anchorDay,days);
 
+  // After a legacy import, the file may be physically rotated, e.g.
+  // TODAY -> OLD IMPORT -> ... -> YESTERDAY. oldestLogical points to the
+  // actual oldest calendar day. Reading cyclically from there restores
+  // chronological order without rewriting the file.
   auto logicalAtChronologicalOffset=[&](uint32_t offset)->uint32_t{
     if(historyHeader.count==0)return 0;
     return (oldestLogical+offset)%historyHeader.count;
   };
 
+  // Pass 1: count unique existing days in the requested window.
   uint32_t scanned=0,uniqueEligible=0,duplicatesSkipped=0;
   DailyHistoryRecord pending{};
   bool havePending=false;
@@ -1267,7 +1309,7 @@ void handleHistoryApi(){
     if(!havePending){
       pending=r;havePending=true;
     }else if(r.dayKey==pending.dayKey){
-      pending=r;
+      pending=r; // the last record of this day wins
       duplicatesSkipped++;
     }else{
       countPending();
@@ -1277,6 +1319,7 @@ void handleHistoryApi(){
   }
   countPending();
 
+  // Downsampling is based on the ACTUALLY available days.
   const uint32_t maxPoints=365;
   const uint32_t calculatedStep=(uniqueEligible+maxPoints-1U)/maxPoints;
   const uint32_t step=(calculatedStep<1U)?1U:calculatedStep;
@@ -1334,6 +1377,7 @@ void handleHistoryApi(){
     yield();
   };
 
+  // Pass 2: output the same cyclic order.
   havePending=false;
   for(uint32_t off=0;off<historyHeader.count;off++){
     const uint32_t li=logicalAtChronologicalOffset(off);
@@ -1429,6 +1473,7 @@ void handleClimateHistoryApi(){
     return (oldestLogical+offset)%historyHeader.count;
   };
 
+  // Count only days with climate data; at most about 365 output points.
   uint32_t climateDays=0;
   DailyHistoryRecord pending{};
   bool havePending=false;
@@ -1595,6 +1640,7 @@ void handleMonthlyComparisonApi(){
   const int currentYear=nt.tm_year+1900;
   const int firstYear=currentYear-(int)years+1;
 
+  // 10 years x 12 months = only 120 values on the stack.
   uint32_t sums[10][12] = {};
   uint16_t counts[10][12] = {};
   uint32_t duplicatesSkipped=0;
@@ -1634,6 +1680,7 @@ void handleMonthlyComparisonApi(){
         pending=r;
         havePending=true;
       }else if(r.dayKey==pending.dayKey){
+        // the last record of the day wins
         pending=r;
         duplicatesSkipped++;
       }else{
@@ -1672,6 +1719,7 @@ void handleMonthlyComparisonApi(){
 
     for(uint8_t yi=0;yi<years;yi++){
       if(yi)out+=',';
+      // Zero means there is no daily data for this month/year.
       if(counts[yi][m]==0)out+=F("null");
       else out+=String(sums[yi][m]);
     }
@@ -1692,7 +1740,7 @@ void handleMonthlyComparisonApi(){
 
   Serial.print(F("[MONTHLY] Vergleich "));
   Serial.print(years);
-  Serial.print(F(" Jahre "));
+  Serial.print(F(LTXT_LOG_YEARS_SPACED));
   Serial.print(firstYear);
   Serial.print('-');
   Serial.print(currentYear);
@@ -1814,6 +1862,8 @@ void handleRecentRefills(){
       DailyHistoryRecord r;
       if(!historyReadChronologicalFromOpenFile(f,(uint32_t)i,r))continue;
 
+      // When reading backwards, the first hit for a day is the newest
+      // record for that calendar day. Ignore older duplicates of the same day.
       if(r.dayKey==lastDay)continue;
       lastDay=r.dayKey;
 
@@ -1835,6 +1885,9 @@ void handleRecentRefills(){
   webFinishConnection();
 }
 
+// ---------------------------------------------------------------------------
+// V0.9.10: restored history/import helper block
+// ---------------------------------------------------------------------------
 bool historyResetFile(){
   if(!historyReady)return false;
   historyInvalidateStatsCache();
@@ -1850,6 +1903,7 @@ int32_t historyDayOrdinal(uint32_t dayKey){
   int32_t d=(int32_t)(dayKey%100UL);
   if(y<1970||m<1||m>12||d<1||d>31)return -1;
 
+  // Gregorian day index, independent of timezone/DST.
   if(m<=2){y--;m+=12;}
   return 365*y + y/4 - y/100 + y/400 + (153*(m-3)+2)/5 + d - 1;
 }
@@ -1875,10 +1929,11 @@ bool historyGenerateFast(uint16_t days) {
 
   time_t now = time(nullptr);
   if (now < 1700000000) {
-    Serial.println(F("[HISTORY] Testdaten FEHLER: keine gueltige Uhrzeit"));
+    Serial.println(F(LTXT_LOG_TEST_NO_TIME));
     return false;
   }
 
+  // Rebuild the existing history in one step.
   LittleFS.remove(HISTORY_FILE);
 
   memset(&historyHeader, 0, sizeof(historyHeader));
@@ -1887,7 +1942,7 @@ bool historyGenerateFast(uint16_t days) {
   historyHeader.recordSize = sizeof(DailyHistoryRecord);
 
   if (!LittleFS.info(fsInfoCache)) {
-    Serial.println(F("[HISTORY] Testdaten FEHLER: LittleFS Info"));
+    Serial.println(F(LTXT_LOG_TEST_FS_INFO));
     return false;
   }
 
@@ -1909,7 +1964,7 @@ bool historyGenerateFast(uint16_t days) {
 
   File f = LittleFS.open(HISTORY_FILE, "w+");
   if (!f) {
-    Serial.println(F("[HISTORY] Testdaten FEHLER: Datei oeffnen"));
+    Serial.println(F(LTXT_LOG_TEST_OPEN_FILE));
     historyReady = false;
     return false;
   }
@@ -1917,7 +1972,7 @@ bool historyGenerateFast(uint16_t days) {
   if (f.write(reinterpret_cast<const uint8_t*>(&historyHeader),
               sizeof(historyHeader)) != sizeof(historyHeader)) {
     f.close();
-    Serial.println(F("[HISTORY] Testdaten FEHLER: Header"));
+    Serial.println(F(LTXT_LOG_TEST_HEADER));
     historyReady = false;
     return false;
   }
@@ -1935,1659 +1990,10 @@ bool historyGenerateFast(uint16_t days) {
   float level = cap * 0.90f;
   uint32_t refills = 0;
 
-  Serial.print(F("[HISTORY] Erzeuge Testdaten sequentiell: "));
+  Serial.print(F(LTXT_LOG_TEST_GENERATE));
   Serial.print(days);
-  Serial.println(F(" Tage"));
+  Serial.println(F(LTXT_LOG_DAYS_SUFFIX));
 
   for (uint16_t i = 0; i < days; ++i) {
     const time_t ts = start + (time_t)i * 86400;
-    struct tm d;
-    localtime_r(&ts, &d);
-
-    float seasonal =
-      1.0f + 0.55f *
-      cosf((((float)d.tm_yday - 15.0f) / 365.0f) * 6.2831853f);
-
-    float daily =
-      cap * 0.0012f * seasonal *
-      (1.0f + 0.08f * sinf((float)i * 1.731f));
-
-    daily = constrain(daily, 0.1f, cap * 0.01f);
-
-    uint16_t refill = 0;
-    uint16_t cons = (uint16_t)constrain((int)lroundf(daily), 0, 65535);
-
-    level -= daily;
-
-    if (level < cap * 0.25f || (i > 30 && (i % 170) == 0)) {
-      float before = level;
-      level = min(cap * 0.92f, level + cap * 0.60f);
-      refill = (uint16_t)constrain((int)lroundf(max(0.0f, level - before)), 0, 65535);
-      cons = 0;
-      refills++;
-    }
-
-    DailyHistoryRecord r = {};
-    historyClimateClear(r);
-    r.dayKey = historyDayKeyFromTime(ts);
-    r.samples = 1;
-    r.levelLiters = (uint16_t)constrain((int)lroundf(level), 0, 65535);
-
-    uint16_t p = (uint16_t)constrain(
-      (int)lroundf(historyPercentForLiters(r.levelLiters) * 10.0f),
-      0, 1000);
-
-    r.avgPermille = p;
-    r.minPermille = p;
-    r.maxPermille = p;
-    r.firstLiters = r.levelLiters;
-    r.consumptionLiters = cons;
-    r.refillLiters = refill;
-    r.source = HISTORY_TEST;
-    r.flags = 0;
-    r.crc16 = historyRecordCrc(r);
-
-    if (f.write(reinterpret_cast<const uint8_t*>(&r), sizeof(r)) != sizeof(r)) {
-      f.close();
-      Serial.print(F("[HISTORY] Testdaten Schreibfehler bei Tag "));
-      Serial.println(i);
-      historyReady = false;
-      return false;
-    }
-
-    if ((i & 0x1F) == 0) {
-      yield();
-
-      if ((i % 365) == 0 || i + 1 == days) {
-        Serial.print(F("[HISTORY] Testdaten Fortschritt: "));
-        Serial.print(i + 1);
-        Serial.print('/');
-        Serial.println(days);
-      }
-    }
-  }
-
-  f.flush();
-  f.close();
-
-  historyReady = true;
-  historyCurrentValid = false;
-  historyWriteCount += days;
-  historyInvalidateStatsCache();
-
-  Serial.print(F("[HISTORY] Testdaten fertig: "));
-  Serial.print(days);
-  Serial.print(F(" Tage, Nachfuellungen="));
-  Serial.println(refills);
-
-  return true;
-}
-
-void historyGenerate(uint16_t days) {
-  historyGenerateFast(days);
-}
-
-void handleGenerateTestHistory(){historyGenerate(365);server.sendHeader("Location","/history",true);server.send(303,"text/plain","");}
-
-void handleGenerate10YearTestHistory(){historyGenerate(3650);server.sendHeader("Location","/history",true);server.send(303,"text/plain","");}
-
-void handleClearHistory(){
-  if(!server.hasArg("confirmText") || server.arg("confirmText")!="LOESCHEN"){
-    Serial.println(F("[HISTORY] Loeschen ABGEBROCHEN: Sicherheitsbestaetigung fehlt/falsch"));
-
-    String html;
-    html.reserve(520);
-    html=F("<!doctype html><html><head><meta charset='utf-8'>"
-           "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-           "<title>Historie nicht geloescht</title></head>"
-           "<body style='font-family:sans-serif;background:#111;color:#eee;padding:20px'>"
-           "<h2>Historie NICHT geloescht</h2>"
-           "<p>Die Sicherheitsbestaetigung war nicht korrekt.</p>"
-           "<p>Zum Loeschen muss exakt <b>LOESCHEN</b> eingegeben werden.</p>"
-           "<p><a style='color:#8fd3ff' href='/history/maintenance'>Zur Wartung</a></p>"
-           "</body></html>");
-    server.send(400,"text/html; charset=utf-8",html);
-    return;
-  }
-
-  Serial.println(F("[HISTORY] Loeschen bestaetigt: LOESCHEN"));
-historyResetFile();server.sendHeader("Location","/history",true);server.send(303,"text/plain","");}
-
-bool parseImportDate(String v,uint32_t& dayKey){
-  v.trim();char sep=v.indexOf('.')>=0?'.':'-';int p1=v.indexOf(sep),p2=p1>=0?v.indexOf(sep,p1+1):-1;
-  if(p1<0||p2<0)return false;
-  int d=v.substring(0,p1).toInt(),m=v.substring(p1+1,p2).toInt(),y=v.substring(p2+1).toInt();
-  if(y<100)y+=2000;if(d<1||d>31||m<1||m>12||y<2000)return false;
-  struct tm t={};t.tm_year=y-1900;t.tm_mon=m-1;t.tm_mday=d;t.tm_hour=12;time_t ts=mktime(&t);
-  if(ts==(time_t)-1)return false;struct tm chk;localtime_r(&ts,&chk);
-  if(chk.tm_mday!=d||chk.tm_mon!=m-1||chk.tm_year!=y-1900)return false;
-  dayKey=(uint32_t)y*10000UL+(uint32_t)m*100UL+(uint32_t)d;return true;
-}
-
-HistoryImportParsed parseHistoryImportLine(String line, uint32_t today, uint32_t oldest) {
-  HistoryImportParsed p{};
-  p.valid=false;
-  p.autoDerived=false;
-  p.climateValid=false;
-  p.source=HISTORY_IMPORTED;
-  p.climateSamples=0;
-
-  line.trim();
-  if(!line.length()){p.reason=F("Leer");return p;}
-
-  String cols[13];
-  uint8_t n=0;
-  int pos=0;
-  while(n<13){
-    int q=line.indexOf(';',pos);
-    if(q<0){
-      cols[n++]=line.substring(pos);
-      break;
-    }
-    cols[n++]=line.substring(pos,q);
-    pos=q+1;
-  }
-
-  if(n<2){p.reason=F("Zu wenige Spalten");return p;}
-
-  uint32_t day=0;
-  if(!parseImportDate(cols[0],day)){p.reason=F("Datum ungueltig");return p;}
-  if(today && day>today){p.reason=F("Datum in Zukunft");return p;}
-  if(oldest && day<oldest){p.reason=F("Aelter als 10 Jahre");return p;}
-
-  cols[1].trim();
-  cols[1].replace(',', '.');
-  if(!cols[1].length()){p.reason=F("Liter fehlt");return p;}
-  float liters=cols[1].toFloat();
-  if(!isfinite(liters)||liters<0||liters>65535){p.reason=F("Liter ungueltig");return p;}
-
-  p.dayKey=day;
-  p.liters=(uint16_t)constrain((int)lroundf(liters),0,65535);
-
-  const bool hasConsumption=n>=4 && cols[3].length();
-  const bool hasRefill=n>=5 && cols[4].length();
-  p.autoDerived=!(hasConsumption || hasRefill);
-
-  if(hasConsumption){
-    cols[3].replace(',', '.');
-    float v=cols[3].toFloat();
-    if(isfinite(v)&&v>=0)p.consumption=(uint16_t)constrain((int)lroundf(v),0,65535);
-  }
-
-  if(hasRefill){
-    cols[4].replace(',', '.');
-    float v=cols[4].toFloat();
-    if(isfinite(v)&&v>=0)p.refill=(uint16_t)constrain((int)lroundf(v),0,65535);
-  }
-
-  if(n>=6){
-    cols[5].trim();
-    int q=cols[5].toInt();
-    if(q>=0&&q<=2)p.source=(uint8_t)q;
-  }
-
-  if(n>=12){
-    bool present=true;
-    for(uint8_t i=6;i<=11;i++){
-      cols[i].trim();
-      if(!cols[i].length()){present=false;break;}
-      cols[i].replace(',', '.');
-    }
-
-    if(present){
-      const float ta=cols[6].toFloat();
-      const float tn=cols[7].toFloat();
-      const float tx=cols[8].toFloat();
-      const float ha=cols[9].toFloat();
-      const float hn=cols[10].toFloat();
-      const float hx=cols[11].toFloat();
-
-      const bool plausible=
-        isfinite(ta)&&isfinite(tn)&&isfinite(tx)&&
-        isfinite(ha)&&isfinite(hn)&&isfinite(hx)&&
-        ta>=-40.0f&&ta<=85.0f&&tn>=-40.0f&&tn<=85.0f&&tx>=-40.0f&&tx<=85.0f&&
-        ha>=0.0f&&ha<=100.0f&&hn>=0.0f&&hn<=100.0f&&hx>=0.0f&&hx<=100.0f&&
-        tn<=ta&&ta<=tx&&hn<=ha&&ha<=hx;
-
-      if(plausible){
-        p.climateValid=true;
-        p.tempAvgC=ta;
-        p.tempMinC=tn;
-        p.tempMaxC=tx;
-        p.humidityAvgPct=ha;
-        p.humidityMinPct=hn;
-        p.humidityMaxPct=hx;
-        p.climateSamples=1;
-
-        if(n>=13){
-          cols[12].trim();
-          if(cols[12].length()){
-            long cs=cols[12].toInt();
-            if(cs>0 && cs<=65535)p.climateSamples=(uint16_t)cs;
-          }
-        }
-      }
-    }
-  }
-
-  p.valid=true;
-  if(p.climateValid){
-    p.reason=p.autoDerived?F("OK / automatisch + Klima"):F("OK / CSV + Klima");
-  }else{
-    p.reason=p.autoDerived?F("OK / automatisch"):F("OK / CSV");
-  }
-  return p;
-}
-
-void historyApplyImportedClimate(const HistoryImportParsed& p, DailyHistoryRecord& r){
-  historyClimateClear(r);
-  if(!p.climateValid)return;
-
-  r.tempAvgHalfC=historyEncodeTempHalfC(p.tempAvgC);
-  r.tempMinHalfC=historyEncodeTempHalfC(p.tempMinC);
-  r.tempMaxHalfC=historyEncodeTempHalfC(p.tempMaxC);
-  r.humidityAvgPct=historyEncodeHumidity(p.humidityAvgPct);
-  r.humidityMinPct=historyEncodeHumidity(p.humidityMinPct);
-  r.humidityMaxPct=historyEncodeHumidity(p.humidityMaxPct);
-  r.climateSamples=max((uint16_t)1,p.climateSamples);
-}
-
-void historyDeriveImportFlow(HistoryImportParsed& p, uint32_t prevDay, uint16_t prevLiters, bool prevValid) {
-  if(!p.valid || !p.autoDerived){
-    return;
-  }
-
-  p.consumption=0;
-  p.refill=0;
-
-  if(!prevValid || !historyDaysAreAdjacent(prevDay,p.dayKey)){
-    return;
-  }
-
-  const int32_t delta=(int32_t)p.liters-(int32_t)prevLiters;
-
-  if(delta >= (int32_t)HISTORY_REFILL_MIN_LITERS){
-    p.refill=(uint16_t)min((int32_t)65535,delta);
-    p.consumption=0;
-  }else if(delta < 0){
-    p.consumption=(uint16_t)min((int32_t)65535,-delta);
-  }
-}
-
-void handleHistoryImportPage(){
-  webStreamBegin(F("Historie Import"));
-  webStreamNav(1);
-  server.sendContent(F(
-    "<div class='card'><h1>CSV Import</h1>"
-    "<p>Kompatibel zu Fuellstandsmesser3.</p>"
-    "<p><b>Vollformat:</b> Datum;Fuellstand_L;Fuellstand_%;Verbrauch_L;Nachfuellung_L;Quelle</p>"
-    "<p><b>History V3:</b> zusätzlich Temp Mittel/Min/Max, RH Mittel/Min/Max und optional Klima_Samples</p>"
-    "<p><b>Einfach:</b> Datum;Liter</p>"
-    "<p class='muted'>Bei Datum;Liter werden Verbrauch und Nachfuellung automatisch aus lueckenlosen Folgetagen rekonstruiert. "
-    "Ein Anstieg ab 150 L gilt als Nachfuellung. Kleinere Anstiege gelten als Messschwankung.</p>"
-    "<form method='POST' action='/history/import/preview' enctype='multipart/form-data'>"
-    "<input type='file' name='data' accept='.csv,text/csv' required>"
-    "<button type='submit'>Datei pruefen</button></form>"
-    "<p><a class='btn' href='/history'>Zurueck</a></p></div>"
-  ));
-  webStreamEnd();
-}
-
-void handleHistoryImportUpload(){
-  HTTPUpload& up=server.upload();
-  static File f;
-  if(up.status==UPLOAD_FILE_START){
-    LittleFS.remove(HISTORY_IMPORT_PREVIEW_FILE);
-    f=LittleFS.open(HISTORY_IMPORT_PREVIEW_FILE,"w");
-  }else if(up.status==UPLOAD_FILE_WRITE){
-    if(f)f.write(up.buf,up.currentSize);
-  }else if(up.status==UPLOAD_FILE_END||up.status==UPLOAD_FILE_ABORTED){
-    if(f)f.close();
-  }
-}
-
-void handleHistoryImportPreview(){
-  File f=LittleFS.open(HISTORY_IMPORT_PREVIEW_FILE,"r");
-  if(!f){server.send(400,"text/plain","Importdatei fehlt");return;}
-
-  uint32_t today=0; historyDateNow(today);
-  time_t now=time(nullptr);
-  uint32_t oldest=now>1700000000?historyDayKeyFromTime(now-(time_t)3650*86400):0;
-
-  uint32_t ok=0,bad=0,total=0,shown=0,autoRows=0,climateRows=0;
-  uint32_t prevDay=0;
-  uint16_t prevLiters=0;
-  bool prevValid=false;
-
-  while(f.available()){
-    String line=f.readStringUntil('\n');line.trim();
-    if(!line.length())continue;
-    if(line.startsWith("Datum")||line.startsWith("datum"))continue;
-
-    total++;
-    HistoryImportParsed p=parseHistoryImportLine(line,today,oldest);
-    if(p.valid){
-      historyDeriveImportFlow(p,prevDay,prevLiters,prevValid);
-      ok++;
-      if(p.autoDerived)autoRows++;
-      if(p.climateValid)climateRows++;
-      prevDay=p.dayKey;
-      prevLiters=p.liters;
-      prevValid=true;
-    }else{
-      bad++;
-    }
-
-    if((total&0x3F)==0)yield();
-  }
-
-  f.seek(0,SeekSet);
-  prevDay=0;prevLiters=0;prevValid=false;
-
-  webStreamBegin(F("Import Vorschau"));
-  webStreamNav(1);
-
-  server.sendContent(F("<div class='card'><h1>CSV Import – Vorschau</h1><div class='grid'>"));
-
-  String tiny;
-  tiny.reserve(220);
-  tiny=F("<div class='metric-card'><h3>Zeilen</h3><div>");
-  tiny+=String(total);tiny+=F("</div></div><div class='metric-card'><h3>Gueltig</h3><div class='ok'>");
-  tiny+=String(ok);tiny+=F("</div></div><div class='metric-card'><h3>Verworfen</h3><div class='bad'>");
-  tiny+=String(bad);tiny+=F("</div></div><div class='metric-card'><h3>Automatisch berechnet</h3><div>");
-  tiny+=String(autoRows);tiny+=F("</div></div><div class='metric-card'><h3>Mit Klima</h3><div>");
-  tiny+=String(climateRows);tiny+=F("</div></div></div>");
-  server.sendContent(tiny);
-
-  server.sendContent(F(
-    "<p class='muted'>Bei einfachem Datum;Liter-Import werden Verbrauch und Nachfuellung nur zwischen direkt aufeinanderfolgenden Tagen berechnet. "
-    "Bei Datenluecken startet die Berechnung neu. Vollstaendige Fuellstandsmesser3-Werte werden unveraendert uebernommen.</p>"
-    "<div style='overflow-x:auto'><table><tr><th>#</th><th>Datum</th><th>Liter</th><th>Verbrauch</th><th>Nachfuellung</th><th>Quelle</th><th>Klima</th><th>Berechnung</th><th>Status</th></tr>"
-  ));
-
-  uint32_t rowNo=0;
-  while(f.available() && shown<100){
-    String line=f.readStringUntil('\n');line.trim();
-    if(!line.length())continue;
-    if(line.startsWith("Datum")||line.startsWith("datum"))continue;
-
-    rowNo++;
-    HistoryImportParsed p=parseHistoryImportLine(line,today,oldest);
-
-    if(p.valid){
-      historyDeriveImportFlow(p,prevDay,prevLiters,prevValid);
-      prevDay=p.dayKey;
-      prevLiters=p.liters;
-      prevValid=true;
-    }
-
-    String row;
-    row.reserve(280);
-    row+=F("<tr><td>");row+=String(rowNo);row+=F("</td><td>");
-    row+=p.valid?historyDateString(p.dayKey):F("--");
-    row+=F("</td><td>");row+=p.valid?String(p.liters):F("--");
-    row+=F("</td><td>");row+=p.valid?String(p.consumption):F("--");
-    row+=F("</td><td>");row+=p.valid?String(p.refill):F("--");
-    row+=F("</td><td>");
-    if(p.valid)row+=(p.source==HISTORY_MEASURED?F("Gemessen"):(p.source==HISTORY_TEST?F("Test"):F("Import")));
-    else row+=F("--");
-    row+=F("</td><td>");
-    if(p.valid&&p.climateValid){
-      row+=String(p.tempAvgC,1);row+=F(" C / ");row+=String(p.humidityAvgPct,0);row+=F(" %");
-    }else row+=F("--");
-    row+=F("</td><td>");
-    row+=p.valid?(p.autoDerived?F("automatisch"):F("aus CSV")):p.reason;
-    row+=F("</td><td>");
-    row+=p.valid?F("<span class='ok'>OK</span>"):F("<span class='bad'>Verworfen</span>");
-    row+=F("</td></tr>");
-    server.sendContent(row);
-
-    shown++;
-    if((shown&0x0F)==0)yield();
-  }
-
-  f.close();
-
-  server.sendContent(F("</table></div>"));
-  if(total>shown){
-    server.sendContent(F("<p class='muted'>Nur die ersten 100 Datenzeilen werden angezeigt; geprueft wurden alle.</p>"));
-  }
-
-  server.sendContent(F("<div class='links' style='margin-top:14px'>"));
-  if(ok){
-    server.sendContent(F("<form method='POST' action='/history/import/apply' style='margin:0'><button type='submit' onclick=\"return confirm('Gueltige Daten jetzt in die Historie uebernehmen?')\">Import uebernehmen</button></form>"));
-  }
-  server.sendContent(F("<form method='POST' action='/history/import/cancel' style='margin:0'><button class='danger' type='submit'>Abbrechen</button></form></div></div>"));
-  webStreamEnd();
-}
-
-void handleHistoryImportApply(){
-  File preview=LittleFS.open(HISTORY_IMPORT_PREVIEW_FILE,"r");
-  if(!preview){server.send(400,"text/plain","Keine Vorschau-Datei vorhanden");return;}
-
-  uint32_t today=0; historyDateNow(today);
-  time_t now=time(nullptr);
-  uint32_t oldest=now>1700000000?historyDayKeyFromTime(now-(time_t)3650*86400):0;
-
-  int32_t minOrdinal=INT32_MAX;
-  int32_t maxOrdinal=INT32_MIN;
-  uint32_t previewValid=0;
-
-  while(preview.available()){
-    String line=preview.readStringUntil('\n');line.trim();
-    if(!line.length())continue;
-    if(line.startsWith("Datum")||line.startsWith("datum"))continue;
-
-    HistoryImportParsed p=parseHistoryImportLine(line,today,oldest);
-    if(!p.valid)continue;
-
-    int32_t ord=historyDayOrdinal(p.dayKey);
-    if(ord<0)continue;
-    if(ord<minOrdinal)minOrdinal=ord;
-    if(ord>maxOrdinal)maxOrdinal=ord;
-    previewValid++;
-
-    if((previewValid&0x3F)==0)yield();
-  }
-
-  if(previewValid==0||minOrdinal>maxOrdinal){
-    preview.close();
-    LittleFS.remove(HISTORY_IMPORT_PREVIEW_FILE);
-    server.send(400,"text/plain","Keine gueltigen Importdaten");
-    return;
-  }
-
-  const uint32_t slots=(uint32_t)(maxOrdinal-minOrdinal+1);
-  preview.seek(0,SeekSet);
-
-  LittleFS.remove(HISTORY_IMPORT_INDEX_FILE);
-  File idxFile=LittleFS.open(HISTORY_IMPORT_INDEX_FILE,"w+");
-  if(!idxFile){
-    preview.close();
-    server.send(500,"text/plain","Import-Index konnte nicht erstellt werden");
-    return;
-  }
-
-  if(!historyImportIndexCreate(idxFile,slots)){
-    preview.close();idxFile.close();
-    LittleFS.remove(HISTORY_IMPORT_INDEX_FILE);
-    server.send(500,"text/plain","Import-Index Initialisierung fehlgeschlagen");
-    return;
-  }
-
-  File hist=LittleFS.open(HISTORY_FILE,"r+");
-  if(!hist){
-    preview.close();idxFile.close();
-    LittleFS.remove(HISTORY_IMPORT_INDEX_FILE);
-    server.send(500,"text/plain","History-Datei konnte nicht geoeffnet werden");
-    return;
-  }
-
-  const uint32_t oldestPhysical=historyOldestPhysicalIndex();
-  uint32_t indexed=0;
-
-  for(uint32_t li=0;li<historyHeader.count;li++){
-    const uint32_t physical=(oldestPhysical+li)%historyHeader.capacity;
-    DailyHistoryRecord r;
-    if(!historyReadRecordFromOpenFile(hist,physical,r))continue;
-
-    const int32_t ord=historyDayOrdinal(r.dayKey);
-    if(ord<minOrdinal||ord>maxOrdinal)continue;
-
-    const uint32_t slot=(uint32_t)(ord-minOrdinal);
-    if(historyImportIndexWrite(idxFile,slot,physical))indexed++;
-
-    if((li&0x7F)==0)yield();
-  }
-  idxFile.flush();
-
-  bool bulkAppend = false;
-  if(indexed == 0){
-    if(historyHeader.count == 0){
-      bulkAppend = true;
-    }else{
-      File chronologyFile=LittleFS.open(HISTORY_FILE,"r");
-      DailyHistoryRecord newestExisting{};
-      uint32_t newestExistingLogical=0;
-      if(chronologyFile){
-        historyNewestRecordFromOpenFile(chronologyFile,newestExisting,newestExistingLogical);
-        chronologyFile.close();
-      }
-      const int32_t newestExistingOrdinal=historyDayOrdinal(newestExisting.dayKey);
-      bulkAppend = (newestExisting.dayKey>0 && newestExistingOrdinal < minOrdinal);
-    }
-  }
-
-  if(bulkAppend){
-    Serial.println(F("[IMPORT] BULK-APPEND aktiv: Chronologie bleibt erhalten"));
-  }else if(indexed==0){
-    Serial.println(F("[IMPORT] BULK-APPEND gesperrt: bestehende neuere History -> INDEX-Modus"));
-  }
-
-  const uint32_t importApplyStartMs=millis();
-  uint32_t ok=0,bad=0,derived=0,refills=0,updated=0,appended=0;
-  uint32_t processed=0;
-  uint32_t prevDay=0;
-  uint16_t prevLiters=0;
-  bool prevValid=false;
-  bool headerDirty=false;
-
-  Serial.print(F("[IMPORT] Fast-Apply Start valid="));
-  Serial.print(previewValid);
-  Serial.print(F(" slots="));
-  Serial.print(slots);
-  Serial.print(F(" indexed="));
-  Serial.println(indexed);
-
-  while(preview.available()){
-    String line=preview.readStringUntil('\n');line.trim();
-    if(!line.length())continue;
-    if(line.startsWith("Datum")||line.startsWith("datum"))continue;
-
-    HistoryImportParsed p=parseHistoryImportLine(line,today,oldest);
-    if(!p.valid){bad++;continue;}
-
-    processed++;
-    if((processed%250U)==0U || processed==previewValid){
-      Serial.print(F("[IMPORT] Fortschritt "));
-      Serial.print(processed);
-      Serial.print('/');
-      Serial.println(previewValid);
-      yield();
-    }
-
-    historyDeriveImportFlow(p,prevDay,prevLiters,prevValid);
-
-    if(p.autoDerived){
-      derived++;
-      if(p.refill>=HISTORY_REFILL_MIN_LITERS)refills++;
-    }
-
-    const int32_t ord=historyDayOrdinal(p.dayKey);
-    if(ord<minOrdinal||ord>maxOrdinal){
-      bad++;
-      continue;
-    }
-
-    const uint32_t slot=(uint32_t)(ord-minOrdinal);
-    uint32_t physical=0xFFFFFFFFUL;
-
-    DailyHistoryRecord r={};
-    historyApplyImportedClimate(p,r);
-    r.dayKey=p.dayKey;
-    r.samples=1;
-    r.levelLiters=p.liters;
-    const uint16_t permille=(uint16_t)constrain(
-      (int)lroundf(historyPercentForLiters(p.liters)*10.0f),0,1000);
-    r.avgPermille=r.minPermille=r.maxPermille=permille;
-    r.firstLiters=p.liters;
-    r.consumptionLiters=p.consumption;
-    r.refillLiters=p.refill;
-    r.source=p.source<=HISTORY_TEST?p.source:HISTORY_IMPORTED;
-
-    bool writeOk=false;
-
-    if(bulkAppend){
-      physical=historyHeader.writeIndex;
-      writeOk=historyWriteRecordToOpenFile(hist,physical,r);
-
-      if(writeOk){
-        if(historyHeader.count<historyHeader.capacity)historyHeader.count++;
-        historyHeader.writeIndex=(historyHeader.writeIndex+1)%historyHeader.capacity;
-        headerDirty=true;
-        appended++;
-      }
-    }else{
-      if(!historyImportIndexRead(idxFile,slot,physical)){
-        bad++;
-        continue;
-      }
-
-      if(physical!=0xFFFFFFFFUL && physical<historyHeader.capacity){
-        writeOk=historyWriteRecordToOpenFile(hist,physical,r);
-        if(writeOk)updated++;
-      }else{
-        physical=historyHeader.writeIndex;
-        writeOk=historyWriteRecordToOpenFile(hist,physical,r);
-
-        if(writeOk){
-          if(historyHeader.count<historyHeader.capacity)historyHeader.count++;
-          historyHeader.writeIndex=(historyHeader.writeIndex+1)%historyHeader.capacity;
-          headerDirty=true;
-          appended++;
-          historyImportIndexWrite(idxFile,slot,physical);
-        }
-      }
-    }
-
-    if(writeOk){
-      ok++;
-      historyWriteCount++;
-    }else{
-      bad++;
-      historyWriteErrors++;
-    }
-
-    prevDay=p.dayKey;
-    prevLiters=p.liters;
-    prevValid=true;
-
-    if(bulkAppend){
-      if(((ok+bad)%500U)==0U){
-        hist.flush();
-        yield();
-      }
-    }else if(((ok+bad)&0x3F)==0){
-      hist.flush();
-      yield();
-    }
-  }
-
-  bool headerOk=true;
-  if(headerDirty)headerOk=historyWriteHeader(hist);
-  hist.flush();
-  idxFile.flush();
-
-  preview.close();
-  hist.close();
-  idxFile.close();
-
-  LittleFS.remove(HISTORY_IMPORT_INDEX_FILE);
-  LittleFS.remove(HISTORY_IMPORT_PREVIEW_FILE);
-
-  historyInvalidateStatsCache();
-  historyCurrentValid=false;
-
-  Serial.print(F("[IMPORT] Fast-Apply Fertig verarbeitet="));Serial.print(processed);
-  Serial.print(F(" OK="));Serial.print(ok);
-  Serial.print(F(" Fehler="));Serial.print(bad);
-  Serial.print(F(" Update="));Serial.print(updated);
-  Serial.print(F(" Append="));Serial.print(appended);
-  Serial.print(F(" automatisch="));Serial.print(derived);
-  Serial.print(F(" Nachfuellungen="));Serial.print(refills);
-  Serial.print(F(" Header="));Serial.print(headerOk?F("OK"):F("FEHLER"));
-  Serial.print(F(" Modus="));Serial.print(bulkAppend?F("BULK"):F("INDEX"));
-  Serial.print(F(" Zeit="));Serial.print(millis()-importApplyStartMs);Serial.println(F(" ms"));
-
-  webStreamBegin(F("CSV Import"));
-  webStreamNav(1);
-
-  String s;
-  s.reserve(480);
-  s=F("<div class='card'><h1>CSV Import abgeschlossen</h1><div class='grid'>"
-      "<div class='metric-card'><h3>Uebernommen</h3><div>");
-  s+=String(ok);
-  s+=F("</div></div><div class='metric-card'><h3>Verworfen</h3><div>");
-  s+=String(bad);
-  s+=F("</div></div><div class='metric-card'><h3>Aktualisiert</h3><div>");
-  s+=String(updated);
-  s+=F("</div></div><div class='metric-card'><h3>Neu</h3><div>");
-  s+=String(appended);
-  s+=F("</div></div><div class='metric-card'><h3>Automatisch berechnet</h3><div>");
-  s+=String(derived);
-  s+=F("</div></div><div class='metric-card'><h3>Nachfuellungen erkannt</h3><div>");
-  s+=String(refills);
-  s+=F("</div></div><div class='metric-card'><h3>Importmodus</h3><div>");
-  s+=bulkAppend?F("BULK"):F("INDEX");
-  s+=F("</div></div><div class='metric-card'><h3>Dauer</h3><div>");
-  s+=String(millis()-importApplyStartMs);
-  s+=F(" ms</div></div></div>");
-  if(!bulkAppend && indexed==0 && appended>0){
-    s+=F("<p style='color:#ffb52e'><b>Hinweis:</b> Ältere Daten wurden zu einer bereits neueren History hinzugefügt. "
-         "Unter Wartung bitte einmal <b>Chronologie normalisieren / reparieren</b> ausführen.</p>");
-  }
-  if(!headerOk)s+=F("<p class='bad'>Warnung: History-Header konnte nicht gespeichert werden.</p>");
-  s+=F("<div class='links' style='margin-top:14px'><a class='btn' href='/history'>Zur Historie</a></div></div>");
-  server.sendContent(s);
-  webStreamEnd();
-}
-
-void handleHistoryImportCancel(){
-  LittleFS.remove(HISTORY_IMPORT_PREVIEW_FILE);
-  server.sendHeader("Location","/history",true);
-  server.send(303,"text/plain","");
-}
-
-uint32_t historyCountSource(uint8_t source){
-  if(!historyReady || historyHeader.count==0)return 0;
-
-  File f=LittleFS.open(HISTORY_FILE,"r");
-  if(!f)return 0;
-
-  const uint32_t oldest=historyOldestPhysicalIndex();
-  uint32_t count=0;
-
-  for(uint32_t li=0;li<historyHeader.count;li++){
-    const uint32_t physical=(oldest+li)%historyHeader.capacity;
-    DailyHistoryRecord r;
-    if(historyReadRecordFromOpenFile(f,physical,r) && r.source==source)count++;
-    if((li&0x7F)==0)yield();
-  }
-
-  f.close();
-  return count;
-}
-
-bool historyDeleteSource(uint8_t source,uint32_t& removed){
-  removed=0;
-  if(!historyReady)return false;
-  if(historyHeader.count==0)return true;
-
-  File src=LittleFS.open(HISTORY_FILE,"r");
-  if(!src)return false;
-
-  LittleFS.remove(HISTORY_FILTER_TMP_FILE);
-  File tmp=LittleFS.open(HISTORY_FILTER_TMP_FILE,"w+");
-  if(!tmp){
-    src.close();
-    return false;
-  }
-
-  HistoryHeader newHeader=historyHeader;
-  newHeader.count=0;
-  newHeader.writeIndex=0;
-  newHeader.crc=historyHeaderCrc(newHeader);
-
-  if(tmp.write(reinterpret_cast<const uint8_t*>(&newHeader),sizeof(newHeader))!=sizeof(newHeader)){
-    src.close();tmp.close();
-    LittleFS.remove(HISTORY_FILTER_TMP_FILE);
-    return false;
-  }
-
-  const uint32_t oldest=historyOldestPhysicalIndex();
-  uint32_t kept=0;
-
-  for(uint32_t li=0;li<historyHeader.count;li++){
-    const uint32_t physical=(oldest+li)%historyHeader.capacity;
-    DailyHistoryRecord r;
-
-    if(!historyReadRecordFromOpenFile(src,physical,r)){
-      removed++;
-      continue;
-    }
-
-    if(r.source==source){
-      removed++;
-      continue;
-    }
-
-    const uint32_t offset=sizeof(HistoryHeader)+kept*sizeof(DailyHistoryRecord);
-    if(!tmp.seek(offset,SeekSet)){
-      src.close();tmp.close();
-      LittleFS.remove(HISTORY_FILTER_TMP_FILE);
-      return false;
-    }
-
-    if(tmp.write(reinterpret_cast<const uint8_t*>(&r),sizeof(r))!=sizeof(r)){
-      src.close();tmp.close();
-      LittleFS.remove(HISTORY_FILTER_TMP_FILE);
-      return false;
-    }
-
-    kept++;
-    if((li&0x7F)==0)yield();
-  }
-
-  newHeader.count=kept;
-  newHeader.writeIndex=kept%newHeader.capacity;
-  newHeader.crc=historyHeaderCrc(newHeader);
-
-  if(!tmp.seek(0,SeekSet) ||
-     tmp.write(reinterpret_cast<const uint8_t*>(&newHeader),sizeof(newHeader))!=sizeof(newHeader)){
-    src.close();tmp.close();
-    LittleFS.remove(HISTORY_FILTER_TMP_FILE);
-    return false;
-  }
-
-  tmp.flush();
-  src.close();
-  tmp.close();
-
-  LittleFS.remove(HISTORY_FILTER_BAK_FILE);
-
-  if(!LittleFS.rename(HISTORY_FILE,HISTORY_FILTER_BAK_FILE)){
-    LittleFS.remove(HISTORY_FILTER_TMP_FILE);
-    return false;
-  }
-
-  if(!LittleFS.rename(HISTORY_FILTER_TMP_FILE,HISTORY_FILE)){
-    LittleFS.rename(HISTORY_FILTER_BAK_FILE,HISTORY_FILE);
-    LittleFS.remove(HISTORY_FILTER_TMP_FILE);
-    return false;
-  }
-
-  LittleFS.remove(HISTORY_FILTER_BAK_FILE);
-
-  historyHeader=newHeader;
-  historyCurrentValid=false;
-  historyInvalidateStatsCache();
-
-  return true;
-}
-
-bool historyCompactAdjacentDuplicates(uint32_t& removed,uint32_t& invalid){
-  removed=0;
-  invalid=0;
-  historyCompactPerformed=false;
-
-  if(!historyReady)return false;
-  if(historyHeader.count==0)return true;
-
-  Serial.print(F("[HISTORY COMPACT] Start count="));
-  Serial.println(historyHeader.count);
-
-  File src=LittleFS.open(HISTORY_FILE,"r");
-  if(!src){
-    Serial.println(F("[HISTORY COMPACT] History-Datei nicht lesbar"));
-    return false;
-  }
-
-  LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
-  File tmp=LittleFS.open(HISTORY_COMPACT_TMP_FILE,"w+");
-  if(!tmp){
-    src.close();
-    Serial.println(F("[HISTORY COMPACT] Temp-Datei nicht erstellbar"));
-    return false;
-  }
-
-  HistoryHeader newHeader=historyHeader;
-  newHeader.count=0;
-  newHeader.writeIndex=0;
-  newHeader.crc=historyHeaderCrc(newHeader);
-
-  if(tmp.write(reinterpret_cast<const uint8_t*>(&newHeader),sizeof(newHeader))!=sizeof(newHeader)){
-    src.close();tmp.close();
-    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
-    return false;
-  }
-
-  const uint32_t oldest=historyOldestPhysicalIndex();
-  DailyHistoryRecord pending{};
-  bool havePending=false;
-  uint32_t kept=0;
-
-  auto flushPending=[&]()->bool{
-    if(!havePending)return true;
-    const uint32_t offset=sizeof(HistoryHeader)+kept*sizeof(DailyHistoryRecord);
-    if(!tmp.seek(offset,SeekSet))return false;
-    if(tmp.write(reinterpret_cast<const uint8_t*>(&pending),sizeof(pending))!=sizeof(pending))return false;
-    kept++;
-    havePending=false;
-    return true;
-  };
-
-  for(uint32_t li=0;li<historyHeader.count;li++){
-    const uint32_t physical=(oldest+li)%historyHeader.capacity;
-    DailyHistoryRecord r;
-
-    if(!historyReadRecordFromOpenFile(src,physical,r)){
-      invalid++;
-      if((li&0x1F)==0)yield();
-      continue;
-    }
-
-    if(!havePending){
-      pending=r;
-      havePending=true;
-    }else if(r.dayKey==pending.dayKey){
-      pending=r;
-      removed++;
-    }else{
-      if(!flushPending()){
-        src.close();tmp.close();
-        LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
-        return false;
-      }
-      pending=r;
-      havePending=true;
-    }
-
-    if((li&0x1F)==0)yield();
-  }
-
-  if(!flushPending()){
-    src.close();tmp.close();
-    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
-    return false;
-  }
-
-  newHeader.count=kept;
-  newHeader.writeIndex=kept%newHeader.capacity;
-  newHeader.crc=historyHeaderCrc(newHeader);
-
-  if(!tmp.seek(0,SeekSet) ||
-     tmp.write(reinterpret_cast<const uint8_t*>(&newHeader),sizeof(newHeader))!=sizeof(newHeader)){
-    src.close();tmp.close();
-    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
-    return false;
-  }
-
-  tmp.flush();
-  src.close();
-  tmp.close();
-  yield();
-
-  if(removed==0 && invalid==0){
-    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
-    Serial.println(F("[HISTORY COMPACT] Keine direkten Duplikate gefunden"));
-    return true;
-  }
-
-  LittleFS.remove(HISTORY_COMPACT_BAK_FILE);
-
-  if(!LittleFS.rename(HISTORY_FILE,HISTORY_COMPACT_BAK_FILE)){
-    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
-    return false;
-  }
-
-  if(!LittleFS.rename(HISTORY_COMPACT_TMP_FILE,HISTORY_FILE)){
-    LittleFS.rename(HISTORY_COMPACT_BAK_FILE,HISTORY_FILE);
-    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
-    return false;
-  }
-
-  LittleFS.remove(HISTORY_COMPACT_BAK_FILE);
-
-  historyHeader=newHeader;
-  historyCurrentValid=false;
-  historyInvalidateStatsCache();
-
-  historyCompactDuplicates=removed;
-  historyCompactInvalid=invalid;
-  historyCompactPerformed=true;
-
-  Serial.print(F("[HISTORY COMPACT] Fertig entfernt="));
-  Serial.print(removed);
-  Serial.print(F(" invalid="));
-  Serial.print(invalid);
-  Serial.print(F(" count="));
-  Serial.println(historyHeader.count);
-
-  return true;
-}
-
-HistoryDuplicateScanResult historyScanDuplicates(){
-  HistoryDuplicateScanResult result{};
-  result.ok=false;
-
-  if(!historyReady)return result;
-
-  File f=LittleFS.open(HISTORY_FILE,"r");
-  if(!f)return result;
-
-  result.total=historyHeader.count;
-
-  uint32_t lastDay=0;
-  bool haveLastDay=false;
-  int32_t previousOrdinal=INT32_MIN;
-
-  for(uint32_t i=0;i<historyHeader.count;i++){
-    DailyHistoryRecord rec;
-
-    if(!historyReadChronologicalFromOpenFile(f,i,rec)){
-      result.invalid++;
-      if((i&0x7F)==0)yield();
-      continue;
-    }
-
-    result.valid++;
-
-    const int32_t ord=historyDayOrdinal(rec.dayKey);
-    if(ord>=0){
-      if(previousOrdinal!=INT32_MIN && ord<previousOrdinal)result.outOfOrder++;
-      previousOrdinal=ord;
-    }
-
-    if(haveLastDay && rec.dayKey==lastDay){
-      result.duplicates++;
-    }else{
-      lastDay=rec.dayKey;
-      haveLastDay=true;
-      result.uniqueDays++;
-    }
-
-    if((i&0x7F)==0)yield();
-  }
-
-  f.close();
-  result.ok=true;
-
-  Serial.print(F("[HISTORY DUPSCAN] total="));
-  Serial.print(result.total);
-  Serial.print(F(" valid="));
-  Serial.print(result.valid);
-  Serial.print(F(" unique="));
-  Serial.print(result.uniqueDays);
-  Serial.print(F(" duplicates="));
-  Serial.print(result.duplicates);
-  Serial.print(F(" invalid="));
-  Serial.print(result.invalid);
-  Serial.print(F(" outOfOrder="));
-  Serial.println(result.outOfOrder);
-
-  return result;
-}
-
-void handleHistoryMaintenancePage(){
-  const uint32_t scanStartMs=millis();
-  const HistoryDuplicateScanResult dupScan=historyScanDuplicates();
-  const uint32_t scanTimeMs=millis()-scanStartMs;
-  const uint32_t measuredRecords=historyCountSource(HISTORY_MEASURED);
-  const uint32_t importedRecords=historyCountSource(HISTORY_IMPORTED);
-  const uint32_t testRecords=historyCountSource(HISTORY_TEST);
-
-  webStreamBegin(F("History Wartung"));
-  webStreamNav(1);
-
-  server.sendContent(F(
-    "<div class='card'><div class='topbar'><h1>History Wartung</h1>"
-    "<div class='links'><a class='btn' href='/history'>Zur Historie</a></div></div>"
-    "<p class='muted'>Prüft die gespeicherten Tagesdatensätze auf doppelte Tage, ungültige Records und falsche Reihenfolge.</p>"
-    "<div class='grid'>"
-  ));
-
-  webMetricCard(F("Aktuelle Records"),String(historyHeader.count));
-  webMetricCard(F("Scan: Gültig"),dupScan.ok?String(dupScan.valid):String(F("FEHLER")));
-  webMetricCard(F("Scan: Eindeutige Tage"),dupScan.ok?String(dupScan.uniqueDays):String(F("FEHLER")));
-  webMetricCard(F("Scan: Duplikate"),dupScan.ok?String(dupScan.duplicates):String(F("FEHLER")));
-  webMetricCard(F("Scan: Ungültig"),dupScan.ok?String(dupScan.invalid):String(F("FEHLER")));
-  webMetricCard(F("Scan: Reihenfolgefehler"),dupScan.ok?String(dupScan.outOfOrder):String(F("FEHLER")));
-  webMetricCard(F("Scan-Dauer"),String(scanTimeMs)+F(" ms"));
-  webMetricCard(F("Duplikate erkannt"),String(historyRepairDuplicates));
-  webMetricCard(F("Ungültig / CRC"),String(historyRepairInvalid));
-  webMetricCard(F("Reihenfolgefehler"),String(historyRepairOutOfOrder));
-  webMetricCard(F("Entfernt"),String(historyRepairRemoved));
-  webMetricCard(F("Letzte Reparatur"),
-    historyRepairPerformed?String(F("JA")):String(F("NEIN")));
-  webMetricCard(F("Quelle: Gemessen"),String(measuredRecords)+F(" Records"));
-  webMetricCard(F("Quelle: Import"),String(importedRecords)+F(" Records"));
-  webMetricCard(F("Quelle: Test"),String(testRecords)+F(" Records"));
-  webMetricCard(F("Quick-Compact entfernt"),String(historyCompactDuplicates));
-  webMetricCard(F("Quick-Compact invalid"),String(historyCompactInvalid));
-
-  server.sendContent(F(
-    "</div>"
-  ));
-
-  if(!dupScan.ok){
-    server.sendContent(F("<p class='muted'>Duplicate-Scan konnte nicht ausgeführt werden.</p>"));
-  }else if(dupScan.duplicates>0 || dupScan.invalid>0 || dupScan.outOfOrder>0){
-    server.sendContent(F("<p style='color:#ffb52e'><b>Bereinigung empfohlen:</b> "));
-    webSendSafe(String(dupScan.duplicates));
-    server.sendContent(F(" Duplikate, "));
-    webSendSafe(String(dupScan.invalid));
-    server.sendContent(F(" ungültige Records und "));
-    webSendSafe(String(dupScan.outOfOrder));
-    server.sendContent(F(" Reihenfolgefehler erkannt.</p>"));
-  }else{
-    server.sendContent(F("<p style='color:#42d65b'><b>History sauber:</b> keine Duplikate, ungültigen Records oder Reihenfolgefehler gefunden.</p>"));
-  }
-
-  server.sendContent(F(
-    "<form method='POST' action='/history/maintenance/compact' style='margin-top:16px'>"
-    "<button type='submit' onclick=\"this.disabled=true;this.textContent='Bereinigung läuft …';this.form.submit();\">"
-    "Schnelle Duplikatbereinigung</button></form>"
-    "<form method='POST' action='/history/maintenance/repair' style='margin-top:16px' "
-    "onsubmit=\"return confirm('History vollständig prüfen und chronologisch normalisieren? Je nach Datenmenge kann das einige Zeit dauern.');\">"
-    "<button type='submit' onclick=\"this.disabled=true;this.textContent='Normalisierung läuft …';\">"
-    "Chronologie normalisieren / reparieren</button></form>"
-    "<form method='POST' action='/history/maintenance/delete-test' style='margin-top:10px'>"
-    "<button class='danger' type='submit' "
-    "onclick=\"return confirm('Wirklich ALLE Testdaten löschen? Gemessene und importierte Daten bleiben erhalten.')\">"
-    "Nur Testdaten löschen</button></form>"
-    "<form method='POST' action='/history/maintenance/delete-imported' style='margin-top:10px'>"
-    "<button class='danger' type='submit' "
-    "onclick=\"return confirm('Wirklich ALLE importierten History-Daten löschen? Gemessene Daten und Testdaten bleiben erhalten.')\">"
-    "Nur Importdaten löschen</button></form>"
-    "<p class='muted' style='margin-top:12px'>"
-    "<b>Chronologie normalisieren</b> ist besonders nach dem Import älterer Daten sinnvoll, wenn bereits neuere Messwerte vorhanden waren. "
-    "Dabei werden die Records nach Kalendertag sortiert; pro Tag gewinnt der letzte gültige Datensatz. "
-    "Die Original-History wird nur ersetzt, wenn die neue reparierte Datei vollständig geschrieben wurde. "
-    "Bei einer fehlerfreien Prüfung bleibt die Datei unverändert."
-    "</p></div>"
-  ));
-
-  webStreamEnd();
-}
-
-void handleHistoryCompactDuplicates(){
-  const uint32_t before=historyHeader.count;
-  const uint32_t heapBefore=ESP.getFreeHeap();
-  const uint32_t startMs=millis();
-
-  uint32_t removed=0,invalid=0;
-  const bool ok=historyCompactAdjacentDuplicates(removed,invalid);
-
-  const uint32_t elapsed=millis()-startMs;
-  const uint32_t heapAfter=ESP.getFreeHeap();
-
-  Serial.print(F("[HISTORY COMPACT] Ergebnis="));
-  Serial.print(ok?F("OK"):F("FEHLER"));
-  Serial.print(F(" time="));
-  Serial.print(elapsed);
-  Serial.print(F(" ms heap="));
-  Serial.print(heapBefore);
-  Serial.print(F("->"));
-  Serial.println(heapAfter);
-
-  webStreamBegin(F("History Wartung"));
-  webStreamNav(1);
-
-  server.sendContent(F(
-    "<div class='card'><h1>Schnelle Duplikatbereinigung</h1><div class='grid'>"
-  ));
-
-  webMetricCard(F("Ergebnis"),ok?String(F("OK")):String(F("FEHLER")));
-  webMetricCard(F("Vorher"),String(before)+F(" Records"));
-  webMetricCard(F("Nachher"),String(historyHeader.count)+F(" Records"));
-  webMetricCard(F("Duplikate entfernt"),String(removed));
-  webMetricCard(F("Ungültige entfernt"),String(invalid));
-  webMetricCard(F("Dauer"),String(elapsed)+F(" ms"));
-
-  server.sendContent(F(
-    "</div><p class='muted'>Diese schnelle Bereinigung fasst direkt aufeinanderfolgende gleiche Kalendertage zusammen. "
-    "Der letzte Datensatz des Tages gewinnt.</p>"
-    "<div class='links' style='margin-top:16px'>"
-    "<a class='btn' href='/history/maintenance'>Wartung</a>"
-    "<a class='btn' href='/history'>Historie</a>"
-    "</div></div>"
-  ));
-
-  webStreamEnd();
-}
-
-void handleHistoryMaintenanceRepair(){
-  const uint32_t heapBefore=ESP.getFreeHeap();
-  const uint32_t startMs=millis();
-
-  Serial.println(F("[HISTORY MAINT] Manueller Integritaetslauf gestartet"));
-
-  const bool ok=historyIntegrityCheckAndRepair();
-
-  const uint32_t elapsed=millis()-startMs;
-  const uint32_t heapAfter=ESP.getFreeHeap();
-
-  Serial.print(F("[HISTORY MAINT] Ergebnis="));
-  Serial.print(ok?F("OK"):F("FEHLER"));
-  Serial.print(F(" time="));
-  Serial.print(elapsed);
-  Serial.print(F(" ms heap="));
-  Serial.print(heapBefore);
-  Serial.print(F("->"));
-  Serial.println(heapAfter);
-
-  webStreamBegin(F("History Wartung"));
-  webStreamNav(1);
-
-  server.sendContent(F(
-    "<div class='card'><h1>History-Normalisierung abgeschlossen</h1>"
-    "<div class='grid'>"
-  ));
-
-  webMetricCard(F("Ergebnis"),ok?String(F("OK")):String(F("FEHLER")));
-  webMetricCard(F("Records"),String(historyHeader.count));
-  webMetricCard(F("Duplikate"),String(historyRepairDuplicates));
-  webMetricCard(F("Ungültig / CRC"),String(historyRepairInvalid));
-  webMetricCard(F("Reihenfolgefehler"),String(historyRepairOutOfOrder));
-  webMetricCard(F("Entfernt"),String(historyRepairRemoved));
-  webMetricCard(F("Repariert"),historyRepairPerformed?String(F("JA")):String(F("NEIN")));
-  webMetricCard(F("Dauer"),String(elapsed)+F(" ms"));
-
-  server.sendContent(F(
-    "</div><div class='links' style='margin-top:16px'>"
-    "<a class='btn' href='/history/maintenance'>Wartung</a>"
-    "<a class='btn' href='/history'>Historie</a>"
-    "</div></div>"
-  ));
-
-  webStreamEnd();
-}
-
-void handleHistoryDeleteTestData(){
-  const uint32_t before=historyHeader.count;
-  uint32_t removed=0;
-
-  Serial.println(F("[HISTORY MAINT] Testdaten-Loeschung gestartet"));
-
-  const bool ok=historyDeleteSource(HISTORY_TEST,removed);
-
-  Serial.print(F("[HISTORY MAINT] Testdaten-Loeschung Ergebnis="));
-  Serial.print(ok?F("OK"):F("FEHLER"));
-  Serial.print(F(" entfernt="));
-  Serial.print(removed);
-  Serial.print(F(" count="));
-  Serial.print(before);
-  Serial.print(F("->"));
-  Serial.println(historyHeader.count);
-
-  webStreamBegin(F("History Wartung"));
-  webStreamNav(1);
-
-  server.sendContent(F(
-    "<div class='card'><h1>Testdaten löschen</h1><div class='grid'>"
-  ));
-
-  webMetricCard(F("Ergebnis"),ok?String(F("OK")):String(F("FEHLER")));
-  webMetricCard(F("Entfernt"),String(removed));
-  webMetricCard(F("Vorher"),String(before)+F(" Records"));
-  webMetricCard(F("Nachher"),String(historyHeader.count)+F(" Records"));
-
-  server.sendContent(F(
-    "</div><div class='links' style='margin-top:16px'>"
-    "<a class='btn' href='/history/maintenance'>Wartung</a>"
-    "<a class='btn' href='/history'>Historie</a>"
-    "</div></div>"
-  ));
-
-  webStreamEnd();
-}
-
-void handleHistoryDeleteImportedData(){
-  const uint32_t before=historyHeader.count;
-  uint32_t removed=0;
-
-  Serial.println(F("[HISTORY MAINT] Importdaten-Loeschung gestartet"));
-
-  const bool ok=historyDeleteSource(HISTORY_IMPORTED,removed);
-
-  Serial.print(F("[HISTORY MAINT] Importdaten-Loeschung Ergebnis="));
-  Serial.print(ok?F("OK"):F("FEHLER"));
-  Serial.print(F(" entfernt="));
-  Serial.print(removed);
-  Serial.print(F(" count="));
-  Serial.print(before);
-  Serial.print(F("->"));
-  Serial.println(historyHeader.count);
-
-  webStreamBegin(F("History Wartung"));
-  webStreamNav(1);
-
-  server.sendContent(F(
-    "<div class='card'><h1>Importdaten löschen</h1><div class='grid'>"
-  ));
-
-  webMetricCard(F("Ergebnis"),ok?String(F("OK")):String(F("FEHLER")));
-  webMetricCard(F("Entfernt"),String(removed));
-  webMetricCard(F("Vorher"),String(before)+F(" Records"));
-  webMetricCard(F("Nachher"),String(historyHeader.count)+F(" Records"));
-
-  server.sendContent(F(
-    "</div><div class='links' style='margin-top:16px'>"
-    "<a class='btn' href='/history/maintenance'>Wartung</a>"
-    "<a class='btn' href='/history'>Historie</a>"
-    "</div></div>"
-  ));
-
-  webStreamEnd();
-}
-
-
-void handleHistoryPage(){
-  const uint32_t historyPageHeapBefore=ESP.getFreeHeap();
-  Serial.print(F("[WEB HISTORY PAGE] start heap="));
-  Serial.print(historyPageHeapBefore);
-  Serial.print(F(" maxBlock="));
-  Serial.println(ESP.getMaxFreeBlockSize());
-
-  webStreamBegin(F("Historie"));
-  webStreamNav(1);
-
-  server.sendContent(F(
-    "<style>.periods{display:flex;gap:6px;flex-wrap:wrap}.periodBtn{background:#292929;border:1px solid #555;border-radius:999px;padding:7px 11px;color:#eee}.periodBtn.active,.monthYearsBtn.active{background:#1769aa}.monthYearsBtn{background:#292929;border:1px solid #555;border-radius:999px;padding:7px 11px;color:#eee}.chartToggles{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:.82rem;color:#bbb}.chartToggles label{display:flex;align-items:center;gap:4px}.chartToggles input{width:auto;margin:0}"
-    ".chartWrap{height:300px;position:relative}.chart{width:100%;height:100%}.chartTip{position:absolute;display:none;pointer-events:none;min-width:170px;background:#101418;border:1px solid #4d5965;border-radius:9px;padding:8px;box-shadow:0 4px 14px #000;font-size:12px;z-index:5}.legend{display:flex;gap:14px;flex-wrap:wrap;color:#aaa;font-size:.82rem;margin-top:8px}.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px}@media(max-width:700px){.chartWrap{height:240px}}.chartToggles{margin-left:auto;padding:2px 0}.chartToggles label{padding:5px 8px;border:1px solid #3b3b3b;border-radius:999px;background:#202020;cursor:pointer}.chartToggles label.off{opacity:.38;cursor:not-allowed}.chartToggles input:disabled{cursor:not-allowed}.periods{display:flex;gap:6px;flex-wrap:wrap}.periodBtn,.monthYearsBtn{min-height:32px}.muted.compact{margin:5px 0 8px}</style>"
-  ));
-  server.sendContent(F(
-    "<div class='card'><div class='topbar'><h1>Historie</h1><div class='periods'>"
-    "<button class='periodBtn' data-d='183'>½ Jahr</button><button class='periodBtn active' data-d='365'>1 Jahr</button>"
-    "<button class='periodBtn' data-d='1825'>5 Jahre</button><button class='periodBtn' data-d='3650'>10 Jahre</button></div>"
-    "<div class='chartToggles'><label><input id='histShowTemp' type='checkbox' checked>Temperatur</label><label><input id='histShowHum' type='checkbox' checked>Feuchte</label></div></div>"
-    "<p id='historyLoadStatus' class='muted compact'>Historie wird geladen …</p><div class='chartWrap'><canvas id='hc' class='chart'></canvas><div id='histTip' class='chartTip'></div></div>"
-    "<div class='legend'><span><i style='background:#4da6ff'></i>Füllstand</span><span><i style='background:#ffb52e'></i>Verbrauch</span><span><i style='background:#42d65b'></i>Nachfüllung</span><span><i style='background:#ff8a65'></i>Temperatur</span><span><i style='background:#26c6da'></i>Luftfeuchte</span><span><i style='background:#ffd166'></i>Import</span><span><i style='background:#ff6b6b'></i>Testdaten</span></div></div>"
-    "<div class='card'><div class='topbar'><h2>Monatsvergleich</h2><div class='periods'>"
-    "<button class='monthYearsBtn' data-y='3'>3 Jahre</button><button class='monthYearsBtn active' data-y='5'>5 Jahre</button><button class='monthYearsBtn' data-y='10'>10 Jahre</button></div></div>"
-    "<p id='monthlyStatus' class='muted compact'>Monatsvergleich wird geladen …</p>"
-    "<div class='chartWrap'><canvas id='mc' class='chart'></canvas><div id='monthTip' class='chartTip'></div></div><div id='monthlyLegend' class='legend'></div>"
-    "<div style='overflow-x:auto'><table id='monthlyTable'></table></div></div>"
-    "<div class='card'><h2>Statistik</h2><div class='grid'><div class='metric'>Zeitraum<b id='sd'>--</b></div><div class='metric'>Verbrauch<b id='sc'>-- L</b></div>"
-    "<div class='metric'>Nachfüllungen<b id='sr'>-- L</b></div><div class='metric'>Füllstand<b id='sl'>--</b></div>"
-    "<div class='metric'>Ältester Tag<b id='so'>--</b></div><div class='metric'>Neuester Tag<b id='sn'>--</b></div>"
-  ));
-  server.sendContent(F(
-    "<div class='metric'>Datenbestand<b id='sy'>--</b></div></div></div>"
-    "<div class='card'><h2>Letzte Nachfüllungen</h2><div id='recentRefills' class='muted'>Wird geladen …</div></div>"
-  ));
-  server.sendContent(F(
-    "<div class='card'><h2>Daten</h2><div class='links'><a class='btn' href='/history/import'>CSV importieren</a><a class='btn' href='/history.csv?days=3650'>CSV exportieren</a><a class='btn' href='/history/maintenance'>Wartung</a></div></div>"
-    "<div class='card'><h2>Testdaten</h2><div class='links'><form method='POST' action='/generate-test-history'><button type='submit'>1 Jahr Testdaten</button></form>"
-    "<form method='POST' action='/generate-test-history-10y'><button type='submit'>10 Jahre Testdaten</button></form>"
-    "<form method='POST' action='/clear-history' "
-    "onsubmit=\"return confirm('ACHTUNG: Wirklich die komplette Historie unwiderruflich löschen?');\">"
-    "<p style='color:#ff6b6b'><b>ACHTUNG:</b> Löscht die komplette History dauerhaft.</p>"
-    "<label>Zur Bestätigung exakt <b>LOESCHEN</b> eingeben</label>"
-  ));
-  server.sendContent(F(
-    "<input name='confirmText' autocomplete='off' placeholder='LOESCHEN' required>"
-    "<button class='danger' type='submit'>Historie löschen</button></form></div></div>"
-  ));
-
-  server.sendContent(R"JS(
-<script>
-(function(){
-const $=i=>document.getElementById(i),f=v=>Number.isFinite(Number(v))?Number(v).toFixed(1):'--';
-let d=365,items=[],climateItems=[],histGeom=null,showTemp=true,showHum=true;
-function updateHistoryClimateToggles(){
-  const has=climateItems.length>0;
-  const t=$('histShowTemp'),h=$('histShowHum');
-  if(t){t.disabled=!has;t.closest('label')?.classList.toggle('off',!has)}
-  if(h){h.disabled=!has;h.closest('label')?.classList.toggle('off',!has)}
-}
-
-const mn=['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
-let monthYears=5,monthly=null,monthBars=[];
-
-function dayKeyText(v){
-  const n=Number(v)||0;
-  if(n<10000101)return '--';
-  const y=Math.floor(n/10000),m=Math.floor(n/100)%100,d=n%100;
-  return String(d).padStart(2,'0')+'.'+String(m).padStart(2,'0')+'.'+y;
-}
-function dayKeyDate(v){
-  const n=Number(v)||0;
-  if(n<10000101)return null;
-  const y=Math.floor(n/10000),m=Math.floor(n/100)%100,d=n%100;
-  return new Date(y,m-1,d,12,0,0);
-}
-function dataSpanText(oldest,newest,count){
-  const a=dayKeyDate(oldest),b=dayKeyDate(newest);
-)JS");
-  server.sendContent(R"JS(
-  if(!a||!b||!count)return '--';
-  const days=Math.max(1,Math.round((b-a)/86400000)+1);
-  const years=days/365.2425;
-  if(years>=1)return years.toFixed(1).replace('.',',')+' Jahre · '+count+' Tage';
-  if(days>=30)return (days/30.44).toFixed(1).replace('.',',')+' Monate · '+count+' Tage';
-  return days+' Tage';
-}
-
-function draw(){
-  const c=$('hc'),r=c.getBoundingClientRect(),w=Math.max(300,Math.floor(r.width)),h=Math.floor(r.height),z=devicePixelRatio||1;
-  c.width=w*z;c.height=h*z;const x=c.getContext('2d');x.setTransform(z,0,0,z,0,0);x.clearRect(0,0,w,h);
-  if(!items.length){x.fillStyle='#777';x.fillText('Keine Daten',20,30);return}
-)JS");
-  server.sendContent(R"JS(
-  const pl=38,pr=showTemp&&climateItems.length?42:8,pt=10,pb=22,iw=w-pl-pr,ih=h-pt-pb,t0=items[0].time,t1=Math.max(t0+86400000,items[items.length-1].time),px=t=>pl+(t-t0)/(t1-t0)*iw,py=v=>pt+ih-Math.max(0,Math.min(100,v))/100*ih;
-  let tMin=0,tMax=40;
-  if(showTemp&&climateItems.length){let mn=999,mx=-999;climateItems.forEach(a=>[a.tMin,a.tAvg,a.tMax].forEach(v=>{v=Number(v);if(Number.isFinite(v)){mn=Math.min(mn,v);mx=Math.max(mx,v)}}));if(mn!==999){if(mx-mn<4){mn-=2;mx+=2}tMin=Math.floor(mn-1);tMax=Math.ceil(mx+1)}}
-  const pyT=v=>pt+ih-(v-tMin)/(tMax-tMin)*ih;
-  x.strokeStyle='#333';[0,25,50,75,100].forEach(v=>{let y=py(v);x.beginPath();x.moveTo(pl,y);x.lineTo(w-pr,y);x.stroke();x.fillStyle='#888';x.font='10px Arial';x.fillText(v+'%',2,y+3)});
-)JS");
-  server.sendContent(R"JS(
-  if(showTemp&&climateItems.length)for(let i=0;i<=4;i++){const y=pt+ih-(i/4)*ih,s=(tMin+(tMax-tMin)*(i/4)).toFixed(0)+'°';x.fillStyle='#ff9d83';x.fillText(s,w-x.measureText(s).width-2,y+3)}
-  const maxC=Math.max(1,...items.map(a=>Number(a.consumedLiters)||0));items.forEach(a=>{const q=px(a.time),bh=((Number(a.consumedLiters)||0)/maxC)*(ih*.30);if(bh>0){x.fillStyle='#ffb52e';x.fillRect(q-1,pt+ih-bh,2,bh)}});
-  x.beginPath();items.forEach((a,i)=>{let q=px(a.time),y=py(a.percent);i?x.lineTo(q,y):x.moveTo(q,y)});x.strokeStyle='#4da6ff';x.lineWidth=2;x.stroke();
-)JS");
-  server.sendContent(R"JS(
-  if(showHum&&climateItems.length){let begun=false;x.beginPath();climateItems.forEach(a=>{const v=Number(a.hAvg);if(!Number.isFinite(v))return;const q=px(a.time),y=py(v);begun?x.lineTo(q,y):x.moveTo(q,y);begun=true});if(begun){x.strokeStyle='#26c6da';x.lineWidth=1.8;x.stroke()}}
-  if(showTemp&&climateItems.length){let begun=false;x.beginPath();climateItems.forEach(a=>{const v=Number(a.tAvg);if(!Number.isFinite(v))return;const q=px(a.time),y=pyT(v);begun?x.lineTo(q,y):x.moveTo(q,y);begun=true});if(begun){x.strokeStyle='#ff8a65';x.lineWidth=1.8;x.stroke()}}
-)JS");
-  server.sendContent(R"JS(
-  items.forEach(a=>{const q=px(a.time),y=py(a.percent),src=Number(a.source)||0;if(src===1){x.strokeStyle='#ffd166';x.lineWidth=1.5;x.beginPath();x.arc(q,y,4,0,Math.PI*2);x.stroke()}else if(src===2){x.fillStyle='#ff6b6b';x.beginPath();x.moveTo(q,y-4);x.lineTo(q+4,y+4);x.lineTo(q-4,y+4);x.closePath();x.fill()}if(Number(a.refillLiters)>0){x.fillStyle='#42d65b';x.beginPath();x.arc(q,pt+ih-5,4,0,Math.PI*2);x.fill()}});
-  histGeom={px:items.map(a=>px(a.time))}
-}
-
-
-const histC=$('hc'),histTip=$('histTip');
-
-function nearestClimate(time){
-  let best=null,bd=43200001;
-  climateItems.forEach(v=>{
-    const dd=Math.abs(Number(v.time)-Number(time));
-    if(dd<bd){bd=dd;best=v}
-  });
-  return (best&&bd<=43200000)?best:null;
-}
-
-function histShowTip(e){
-  if(!histGeom||!items.length)return;
-)JS");
-  server.sendContent(R"JS(
-  const r=histC.getBoundingClientRect(),
-        mx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
-
-  let bi=-1,bd=99999;
-  histGeom.px.forEach((q,i)=>{
-    const dd=Math.abs(q-mx);
-    if(dd<bd){bd=dd;bi=i}
-  });
-
-  if(bi<0||bd>28){
-    histTip.style.display='none';
-    return;
-  }
-
-  const a=items[bi],
-        sn=Number(a.source)===1?'Import':(Number(a.source)===2?'Test':'Gemessen'),
-        ci=nearestClimate(a.time);
-
-  let extra='';
-  if(ci){
-    if(showTemp&&Number.isFinite(Number(ci.tAvg))){
-      extra+='<br><span style="color:#ff8a65">Temperatur: '+f(ci.tAvg)+' °C</span>';
-    }
-    if(showHum&&Number.isFinite(Number(ci.hAvg))){
-      extra+='<br><span style="color:#26c6da">Feuchte: '+f(ci.hAvg)+' %</span>';
-    }
-  }
-
-  histTip.innerHTML=
-)JS");
-  server.sendContent(R"JS(
-    '<b>'+new Date(a.time).toLocaleDateString('de-DE')+'</b>'+
-    '<br>Füllstand: '+f(a.percent)+' %'+
-    '<br>Menge: '+f(a.liters)+' L'+
-    '<br>Verbrauch: '+f(a.consumedLiters)+' L'+
-    '<br>Quelle: '+sn+
-    (Number(a.refillLiters)>0
-      ?'<br><span style="color:#65e572">Nachfüllung: +'+f(a.refillLiters)+' L</span>'
-      :'')+
-    extra;
-
-  histTip.style.display='block';
-  histTip.style.left=Math.max(5,Math.min(histC.clientWidth-195,mx+10))+'px';
-  histTip.style.top='8px';
-}
-
-histC.onmousemove=histShowTip;
-histC.ontouchmove=histShowTip;
-histC.onmouseleave=()=>histTip.style.display='none';
-histC.ontouchend=()=>histTip.style.display='none';
-
-async function loadClimate(n){
-  climateItems=[];
-  try{
-    const r=await fetch('/api/history/climate?days='+n+'&x='+Date.now(),{
-      cache:'no-store'
-    });
-)JS");
-  server.sendContent(R"JS(
-    const raw=await r.text();
-    if(!r.ok)throw new Error('HTTP '+r.status);
-    const j=JSON.parse(raw);
-    climateItems=j.items||[];
-  }catch(e){
-    climateItems=[];
-  }
-  draw();
-}
-
-async function load(n){
-  d=n;
-
-  document.querySelectorAll('.periodBtn').forEach(b=>{
-    b.classList.toggle('active',Number(b.dataset.d)===d);
-  });
-
-  const st=$('historyLoadStatus');
-  st.textContent='Historie wird geladen …';
-  st.style.color='#888';
-
-  try{
-    const r=await fetch('/api/history?days='+d+'&x='+Date.now(),{
-      cache:'no-store'
-    });
-    const raw=await r.text();
-
-    if(!r.ok)throw new Error('HTTP '+r.status);
-
-    const j=JSON.parse(raw);
-    if(j.ok===false)throw new Error(j.error||'API');
-
-    items=j.items||[];
-    const s=j.stats||{};
-
-    $('sd').textContent=(s.days||0)+' Tage';
-)JS");
-  server.sendContent(R"JS(
-    $('sc').textContent=f(s.consumptionLiters)+' L';
-    $('sr').textContent=f(s.refillLiters)+' L';
-    $('sl').textContent=
-      (s.minPercent==null||s.maxPercent==null)
-        ?'--'
-        :f(s.minPercent)+'–'+f(s.maxPercent)+' %';
-
-    $('so').textContent=dayKeyText(s.oldestDay);
-    $('sn').textContent=dayKeyText(s.newestDay);
-    $('sy').textContent=dataSpanText(
-      s.oldestDay,
-      s.newestDay,
-      s.days||0
-    );
-
-    st.textContent=
-      'Geladen: '+items.length+
-      ' Grafikpunkte aus '+(s.days||0)+' vorhandenen Tagen';
-    st.style.color='#65e572';
-
-    draw();
-    await loadClimate(d);
-
-    if(climateItems.length){st.textContent+=' · Klima '+climateItems.length+' Tage'}else{st.textContent+=' · keine Klimadaten'}
-  }catch(e){
-    items=[];
-    climateItems=[];
-
-    $('sd').textContent='--';
-)JS");
-  server.sendContent(R"JS(
-    $('sc').textContent='-- L';
-    $('sr').textContent='-- L';
-    $('sl').textContent='--';
-    $('so').textContent='--';
-    $('sn').textContent='--';
-    $('sy').textContent='--';
-
-    st.textContent='Fehler: '+e.message;
-    st.style.color='#ff6565';
-    draw();
-  }
-}
-
-function drawMonthly(){
-  const c=$('mc');if(!c||!monthly)return;
-  const r=c.getBoundingClientRect(),w=Math.max(320,Math.floor(r.width)),h=Math.floor(r.height),z=devicePixelRatio||1;
-  c.width=w*z;c.height=h*z;
-  const x=c.getContext('2d');x.setTransform(z,0,0,z,0,0);x.clearRect(0,0,w,h);
-  const yrs=monthly.years||[],ms=monthly.months||[];let mx=1;
-  ms.forEach(a=>(a||[]).forEach(v=>{if(v!=null&&Number(v)>mx)mx=Number(v)}));
-  const pl=45,pr=10,pt=15,pb=35,iw=w-pl-pr,ih=h-pt-pb;
-  x.strokeStyle='#333';
-)JS");
-  server.sendContent(R"JS(
-  for(let g=0;g<=4;g++){let yy=pt+ih-g*ih/4;x.beginPath();x.moveTo(pl,yy);x.lineTo(w-pr,yy);x.stroke();x.fillStyle='#888';x.font='10px Arial';x.fillText(Math.round(mx*g/4)+'L',2,yy+3)}
-  const group=iw/12,bw=Math.max(2,Math.min(12,(group-4)/Math.max(1,yrs.length)));monthBars=[];
-  ms.forEach((a,m)=>{
-    (a||[]).forEach((v,yi)=>{
-      if(v==null)return;
-      const val=Number(v)||0,q=pl+m*group+2+yi*bw,bh=val/mx*ih,hh=(yi*67)%360;
-      x.fillStyle='hsl('+hh+' 65% 55%)';x.fillRect(q,pt+ih-bh,Math.max(1,bw-1),bh);
-      monthBars.push({x:q,w:Math.max(1,bw-1),top:pt+ih-bh,bottom:pt+ih,month:m,year:yrs[yi],value:val});
-    });
-    x.fillStyle='#aaa';x.font='10px Arial';x.fillText(mn[m],pl+m*group+2,h-8)
-  });
-)JS");
-  server.sendContent(R"JS(
-  let lg='';yrs.forEach((y,yi)=>{lg+='<span><i style="background:hsl('+((yi*67)%360)+' 65% 55%)"></i>'+y+'</span>'});$('monthlyLegend').innerHTML=lg;
-  let t='<tr><th>Monat</th>';yrs.forEach(y=>t+='<th>'+y+'</th>');t+='</tr>';
-  ms.forEach((a,m)=>{t+='<tr><td>'+mn[m]+'</td>';yrs.forEach((y,yi)=>{let v=a?a[yi]:null;t+='<td>'+(v==null?'–':Math.round(v)+' L')+'</td>'});t+='</tr>'});
-  $('monthlyTable').innerHTML=t
-}
-
-const monC=$('mc'),monTip=$('monthTip');
-function monthShowTip(e){
-  const r=monC.getBoundingClientRect(),mx=(e.touches?e.touches[0].clientX:e.clientX)-r.left,my=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
-  let b=monthBars.find(q=>mx>=q.x-2&&mx<=q.x+q.w+2&&my>=q.top-3&&my<=q.bottom+3);
-  if(!b){monTip.style.display='none';return}
-)JS");
-  server.sendContent(R"JS(
-  monTip.innerHTML='<b>'+mn[b.month]+' '+b.year+'</b><br>Verbrauch: '+Math.round(b.value)+' L';
-  monTip.style.display='block';monTip.style.left=Math.max(5,Math.min(monC.clientWidth-175,mx+10))+'px';monTip.style.top='8px'
-}
-monC.onmousemove=monthShowTip;monC.ontouchmove=monthShowTip;monC.onmouseleave=()=>monTip.style.display='none';monC.ontouchend=()=>monTip.style.display='none';
-
-async function loadMonthly(y){
-  monthYears=y;document.querySelectorAll('.monthYearsBtn').forEach(b=>b.classList.toggle('active',Number(b.dataset.y)===monthYears));
-  const st=$('monthlyStatus');st.textContent='Monatsvergleich wird geladen …';
-  try{
-    let r=await fetch('/api/monthly-comparison?years='+monthYears+'&x='+Date.now(),{cache:'no-store'});
-    let raw=await r.text();if(!r.ok)throw new Error('HTTP '+r.status);
-)JS");
-  server.sendContent(R"JS(
-    let j=JSON.parse(raw);if(j.ok===false)throw new Error(j.error||'API');
-    monthly=j;st.textContent='Vergleich '+(j.firstYear||'')+'–'+(j.currentYear||'');st.style.color='#65e572';drawMonthly()
-  }catch(e){monthly=null;st.textContent='Fehler: '+e.message;st.style.color='#ff6565'}
-}
-
-async function loadRefills(){
-  const b=$('recentRefills');
-  try{
-    let r=await fetch('/api/recent-refills?x='+Date.now(),{cache:'no-store'});
-    if(!r.ok)throw new Error('HTTP '+r.status);
-    let j=await r.json(),a=j.items||[];
-    if(!a.length){b.innerHTML='<span class="muted">Keine bestätigten Nachfüllungen vorhanden.</span>';return}
-    let h='<table><tr><th>Datum</th><th>Menge</th><th>Danach</th></tr>';
-)JS");
-  server.sendContent(R"JS(
-    a.forEach(v=>{h+='<tr><td>'+v.date+'</td><td>+'+f(v.liters)+' L</td><td>'+f(v.percent)+' %</td></tr>'});h+='</table>';b.innerHTML=h
-  }catch(e){b.textContent='Nachfüllungen konnten nicht geladen werden.'}
-}
-
-document.querySelectorAll('.periodBtn').forEach(b=>b.onclick=()=>load(Number(b.dataset.d)));
-$('histShowTemp').onchange=e=>{showTemp=!!e.target.checked;draw()};
-$('histShowHum').onchange=e=>{showHum=!!e.target.checked;draw()};
-document.querySelectorAll('.monthYearsBtn').forEach(b=>b.onclick=()=>loadMonthly(Number(b.dataset.y)));
-updateHistoryClimateToggles();
-
-async function initHistoryPage(){
-  await load(365);
-  await loadMonthly(5);
-  await loadRefills();
-}
-initHistoryPage();
-addEventListener('resize',()=>{draw();drawMonthly()});
-})();
-</script>
-)JS");
-
-  webStreamEnd();
-
-  Serial.print(F("[WEB HISTORY PAGE] end heap="));
-  Serial.print(ESP.getFreeHeap());
-  Serial.print(F(" maxBlock="));
-  Serial.print(ESP.getMaxFreeBlockSize());
-  Serial.print(F(" delta="));
-  Serial.println((int32_t)ESP.getFreeHeap()-(int32_t)historyPageHeapBefore);
-}
-
-
-// -----------------------------------------------------------------------------
-// WIFI / AP
+    struct tm d;The requested file reference is not currently visible. Use files.search or files.list to rediscover the file, then retry with a returned ref_id or file_id.
