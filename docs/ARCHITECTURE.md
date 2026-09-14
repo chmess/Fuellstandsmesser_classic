@@ -1,14 +1,13 @@
 # Software-Architektur / Software Architecture
 
 ## Deutsch
-
-Die Firmware ist in echte C++-Module aufgeteilt.
+Die Classic-Firmware ist in echte C++-Module aufgeteilt. V0.12.3 ergänzt eine Compile-Time-Sprachschicht.
 
 | Modul | Aufgabe |
 |---|---|
 | `AppConstants.h` | zentrale Compile-Time-Konstanten |
 | `AppTypes.h` | gemeinsame Datenstrukturen / Config |
-| `Language.h` | aktive Sprache auswählen |
+| `Language.h` | Auswahl der aktiven Sprache |
 | `languages/lang_de.h` | deutsche Benutzertexte |
 | `languages/lang_en.h` | englische Benutzertexte |
 | `AppRuntime` | setup, loop, CLI, Runtime |
@@ -21,15 +20,10 @@ Die Firmware ist in echte C++-Module aufgeteilt.
 | `History` | LittleFS-Historie, Import, Reparatur |
 | `WebServerManager` | Web UI, APIs, Web OTA |
 
-Datenfluss: Sensoren → Messung → Display/MQTT/History → Web/CSV/Statistik.
-
-I18N ist Compile-Time-basiert. Benutzertexte werden übersetzt, maschinenlesbare Topics, API-Felder und persistente Formate bleiben stabil.
-
-ESP8266-RAM ist ein zentraler Grenzwert; mDNS, ArduinoOTA und Home-Assistant MQTT Discovery sind bewusst nicht enthalten.
+I18N: Benutzertexte werden übersetzt; Topics, API-Felder und persistente Formate bleiben stabil. ESP8266-RAM bleibt zentraler Grenzwert; mDNS, ArduinoOTA und Home-Assistant MQTT Discovery sind bewusst nicht enthalten.
 
 ## English
-
-The firmware is split into real C++ modules.
+The Classic firmware is split into real C++ modules. V0.12.3 adds a compile-time language layer.
 
 | Module | Responsibility |
 |---|---|
@@ -48,8 +42,4 @@ The firmware is split into real C++ modules.
 | `History` | LittleFS history, import, repair |
 | `WebServerManager` | web UI, APIs, Web OTA |
 
-Data flow: sensors → measurement → display/MQTT/history → web/CSV/statistics.
-
-I18N is compile-time based. User-facing strings are translated; machine-readable topics, API fields and persistent formats remain stable.
-
-ESP8266 RAM is a primary constraint; mDNS, ArduinoOTA and Home Assistant MQTT Discovery are intentionally omitted.
+I18N: user-facing strings are translated; topics, API fields and persistent formats remain stable. ESP8266 RAM remains a primary constraint; mDNS, ArduinoOTA and Home Assistant MQTT Discovery are intentionally omitted.
