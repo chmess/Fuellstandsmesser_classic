@@ -1,32 +1,35 @@
-# Changelog
+# Changelog / Änderungsprotokoll
 
-Alle nennenswerten Änderungen dieses Repository-Releases werden hier dokumentiert.
+## Deutsch
 
-## [0.12.0] - 2026-09-14
+### V0.12.3 I18N FIX3 — 2026-09-14
+- Compile-Time-Sprachauswahl Deutsch/Englisch
+- zentrale `Language.h`
+- getrennte Sprachdateien `lang_de.h` und `lang_en.h`
+- weitere Web-, History-, Import-, Wartungs-, OTA-, Display-, CLI- und Diagnose-Texte ausgelagert
+- verbliebene deutsche Quellcode-Kommentare auf Englisch vereinheitlicht
+- zweisprachige Dokumentation ergänzt
+- MQTT `average`, `fuellhoehe`, Config V7, History V3 und API-/JSON-Kompatibilität unverändert
 
-### Added
-
-- MIT License
-- deutscher/englischer Sicherheits- und Haftungshinweis
-- vollständige `.h/.cpp`-Modularisierung
+### V0.12.0 — 2026-09-14
+- vollständige .h/.cpp-Modularisierung
 - zentrale `AppConstants.h`
-- GitHub-fertige Projektstruktur
-- Hardware-/Verdrahtungsdokumentation
-- aktuelle Screenshots der Classic-Weboberfläche
-- Architektur-, MQTT-, CLI-, CSV- und Troubleshooting-Dokumentation
+- MIT License
+- GitHub-Projektstruktur und technische Dokumentation
 
-### Changed
+## English
 
-- Haupt-Sketch in Arduino-kompatiblen Unterordner `firmware/Fuellstandsmesser_classic/` verschoben
-- Hauptdatei auf `Fuellstandsmesser_classic.ino` vereinheitlicht
-- gemeinsame Konstanten zentralisiert
+### V0.12.3 I18N FIX3 — 2026-09-14
+- compile-time German/English language selection
+- central `Language.h`
+- separate `lang_de.h` and `lang_en.h`
+- more web, history, import, maintenance, OTA, display, CLI and diagnostic strings localized
+- remaining German source comments standardized to English
+- bilingual documentation added
+- MQTT `average`, `fuellhoehe`, Config V7, History V3 and API/JSON compatibility unchanged
 
-### Compatibility
-
-Unverändert beibehalten:
-
-- MQTT `average`
-- MQTT `fuellhoehe`
-- Config V7
-- History V3
-- bestehende Mess-/Tanklogik
+### V0.12.0 — 2026-09-14
+- complete .h/.cpp modularization
+- central `AppConstants.h`
+- MIT License
+- GitHub project structure and technical documentation
