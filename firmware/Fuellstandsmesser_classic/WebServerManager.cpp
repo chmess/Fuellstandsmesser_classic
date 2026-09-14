@@ -496,3 +496,249 @@ function updateTankSvg(percent, liters, heightMm, distanceMm, geometry){
 
 async function status(){
   try{
+    const r=await fetch('/api/status?x='+Date.now(),{cache:'no-store'});
+    if(!r.ok)throw 0;
+    const d=await r.json();
+    $('liters').textContent=f(d.level_liters);
+    $('percent').textContent=f(d.level_percent)+' %';
+    $('height').textContent=f(d.level_height_mm)+' mm';
+)JS");
+  server.sendContent(R"JS(
+    $('distance').textContent=f(d.filtered_distance_mm)+' mm';
+    $('lpm').textContent=f(d.liters_per_mm,2)+' L/mm';
+    $('rssi').textContent=f(d.rssi,0)+' dBm';
+    $('c1').textContent=f(d.consumption_today_l)+' L';
+    $('c7').textContent=f(d.consumption_7d_l)+' L';
+    $('c30').textContent=f(d.consumption_30d_l)+' L';
+    $('c365').textContent=f(d.consumption_365d_l)+' L';
+    $('ahtTemp').textContent=f(d.temperature_c)+' °C';
+    $('ahtHum').textContent=f(d.humidity_percent)+' %';
+    $('ahtDew').textContent=f(d.dew_point_c)+' °C';
+    $('ahtReserve').textContent=f(d.condensation_reserve_c)+' °C';
+    $('ahtState').textContent=d.aht_status||'--';
+    $('ahtAge').textContent=(d.aht_age_s==null?'--':d.aht_age_s)+' s';
+    dot('dw',d.wifi_connected);dot('dm',d.mqtt_connected);dot('dt',d.vl_ok);
+)JS");
+  server.sendContent(R"JS(
+    let q=Math.max(0,Math.min(100,Number(d.level_percent)||0));
+    updateTankSvg(d.level_percent, d.level_liters, d.level_height_mm, d.filtered_distance_mm, d.tank_geometry);
+    $('bar').style.width=q+'%';
+    $('bar').style.background=q<20?'#ff4d4d':q<40?'#ffad33':'#42d65b';
+    $('updated').textContent=(d.date||'')+' '+(d.time||'');
+  }catch(e){$('updated').textContent='Status-API Fehler'}
+}
+
+function draw(){
+  const c=$('chart'),r=c.getBoundingClientRect(),w=Math.max(300,Math.floor(r.width)),h=Math.floor(r.height),z=devicePixelRatio||1;
+  c.width=w*z;c.height=h*z;const x=c.getContext('2d');x.setTransform(z,0,0,z,0,0);x.clearRect(0,0,w,h);
+  if(!items.length){x.fillStyle='#777';x.fillText('Keine Daten',20,30);return}
+)JS");
+  server.sendContent(R"JS(
+  const pl=38,pr=showTemp&&climateItems.length?42:8,pt=10,pb=22,iw=w-pl-pr,ih=h-pt-pb,t0=items[0].time,t1=Math.max(t0+86400000,items[items.length-1].time),px=t=>pl+(t-t0)/(t1-t0)*iw,py=v=>pt+ih-Math.max(0,Math.min(100,v))/100*ih;
+  let tMin=0,tMax=40;
+  if(showTemp&&climateItems.length){let mn=999,mx=-999;climateItems.forEach(a=>[a.tMin,a.tAvg,a.tMax].forEach(v=>{v=Number(v);if(Number.isFinite(v)){mn=Math.min(mn,v);mx=Math.max(mx,v)}}));if(mn!==999){if(mx-mn<4){mn-=2;mx+=2}tMin=Math.floor(mn-1);tMax=Math.ceil(mx+1)}}
+  const pyT=v=>pt+ih-(v-tMin)/(tMax-tMin)*ih;
+  x.strokeStyle='#333';[0,25,50,75,100].forEach(v=>{let y=py(v);x.beginPath();x.moveTo(pl,y);x.lineTo(w-pr,y);x.stroke();x.fillStyle='#888';x.font='10px Arial';x.fillText(v+'%',2,y+3)});
+)JS");
+  server.sendContent(R"JS(
+  if(showTemp&&climateItems.length)for(let i=0;i<=4;i++){const y=pt+ih-(i/4)*ih,s=(tMin+(tMax-tMin)*(i/4)).toFixed(0)+'°';x.fillStyle='#ff9d83';x.fillText(s,w-x.measureText(s).width-2,y+3)}
+  const maxC=Math.max(1,...items.map(a=>Number(a.consumedLiters)||0));items.forEach(a=>{const q=px(a.time),bh=((Number(a.consumedLiters)||0)/maxC)*(ih*.32);if(bh>0){x.fillStyle='#ffb52e';x.fillRect(q-1,pt+ih-bh,2,bh)}});
+  x.beginPath();items.forEach((a,i)=>{let q=px(a.time),y=py(a.percent);i?x.lineTo(q,y):x.moveTo(q,y)});x.strokeStyle='#4da6ff';x.lineWidth=2;x.stroke();
+)JS");
+  server.sendContent(R"JS(
+  if(showHum&&climateItems.length){let begun=false;x.beginPath();climateItems.forEach(a=>{const v=Number(a.hAvg);if(!Number.isFinite(v))return;const q=px(a.time),y=py(v);begun?x.lineTo(q,y):x.moveTo(q,y);begun=true});if(begun){x.strokeStyle='#26c6da';x.lineWidth=1.8;x.stroke()}}
+  if(showTemp&&climateItems.length){let begun=false;x.beginPath();climateItems.forEach(a=>{const v=Number(a.tAvg);if(!Number.isFinite(v))return;const q=px(a.time),y=pyT(v);begun?x.lineTo(q,y):x.moveTo(q,y);begun=true});if(begun){x.strokeStyle='#ff8a65';x.lineWidth=1.8;x.stroke()}}
+)JS");
+  server.sendContent(R"JS(
+  items.forEach(a=>{const q=px(a.time),y=py(a.percent),src=Number(a.source)||0;if(src===1){x.strokeStyle='#ffd166';x.lineWidth=1.5;x.beginPath();x.arc(q,y,4,0,Math.PI*2);x.stroke()}else if(src===2){x.fillStyle='#ff6b6b';x.beginPath();x.moveTo(q,y-4);x.lineTo(q+4,y+4);x.lineTo(q-4,y+4);x.closePath();x.fill()}if(Number(a.refillLiters)>0){x.fillStyle='#42d65b';x.beginPath();x.arc(q,pt+ih-5,4,0,Math.PI*2);x.fill()}});
+  dbGeom={px:items.map(a=>px(a.time))}
+}
+
+const dbC=$('chart'),dbTip=$('chartTip');
+function dbShowTip(e){
+  if(!dbGeom||!items.length)return;
+  const r=dbC.getBoundingClientRect(),mx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  let bi=-1,bd=99999;
+  dbGeom.px.forEach((q,i)=>{let dd=Math.abs(q-mx);if(dd<bd){bd=dd;bi=i}});
+  if(bi<0||bd>28){dbTip.style.display='none';return}
+)JS");
+  server.sendContent(R"JS(
+  const a=items[bi],sn=Number(a.source)===1?'Import':(Number(a.source)===2?'Test':'Gemessen');
+  dbTip.innerHTML='<b>'+new Date(a.time).toLocaleDateString('de-DE')+'</b><br>Füllstand: '+f(a.percent)+' %<br>Menge: '+f(a.liters)+' L<br>Verbrauch: '+f(a.consumedLiters)+' L<br>Quelle: '+sn+(Number(a.refillLiters)>0?'<br><span style="color:#65e572">Nachfüllung: +'+f(a.refillLiters)+' L</span>':'');
+  dbTip.style.display='block';dbTip.style.left=Math.max(5,Math.min(dbC.clientWidth-185,mx+10))+'px';dbTip.style.top='8px';
+}
+dbC.onmousemove=dbShowTip;dbC.ontouchmove=dbShowTip;dbC.onmouseleave=()=>dbTip.style.display='none';dbC.ontouchend=()=>dbTip.style.display='none';
+
+async function hist(){
+  try{
+    $('hst').textContent='Historie wird geladen …';
+)JS");
+  server.sendContent(R"JS(
+    let r=await fetch('/api/history?days='+p+'&x='+Date.now(),{cache:'no-store'}),raw=await r.text();if(!r.ok)throw new Error('HTTP '+r.status);
+    items=(JSON.parse(raw).items||[]);climateItems=[];
+    try{let cr=await fetch('/api/history/climate?days='+p+'&x='+Date.now(),{cache:'no-store'});if(cr.ok)climateItems=(JSON.parse(await cr.text()).items||[])}catch(_){}
+    $('hst').textContent='Geladen: '+items.length+' Punkte'+(climateItems.length?' · Klima '+climateItems.length+' Tage':' · keine Klimadaten');updateClimateToggleState();draw();
+  }catch(e){items=[];climateItems=[];$('hst').textContent='Historie-Fehler: '+e.message;updateClimateToggleState();draw()}
+}
+
+document.querySelectorAll('.periodBtn').forEach(b=>b.onclick=()=>{p=Number(b.dataset.p);document.querySelectorAll('.periodBtn').forEach(q=>q.classList.toggle('active',q===b));hist()});
+)JS");
+  server.sendContent(R"JS(
+$('showTemp').onchange=e=>{showTemp=!!e.target.checked;draw()};
+$('showHum').onchange=e=>{showHum=!!e.target.checked;draw()};
+updateTankSvg(0, NaN, NaN, NaN, 'rect');
+updateClimateToggleState();
+async function initDashboard(){await status();await hist();}
+initDashboard();
+setInterval(status,10000);
+setInterval(hist,300000);
+addEventListener('resize',draw);
+})();
+</script>
+)JS");
+
+  webStreamEnd();
+
+  Serial.print(F("[WEB ROOT] end heap="));
+  Serial.print(ESP.getFreeHeap());
+  Serial.print(F(" maxBlock="));
+  Serial.print(ESP.getMaxFreeBlockSize());
+  Serial.print(F(" delta="));
+  Serial.println((int32_t)ESP.getFreeHeap()-(int32_t)rootHeapBefore);
+}
+
+String checked(bool v) {
+  return v ? " checked" : "";
+}
+
+void handleSettings() {
+  webStreamBegin(F("Einstellungen"));
+  webStreamNav(2);
+
+  server.sendContent(F(
+    "<style>"
+    ".settingsGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}"
+    ".settingsBlock{background:#1d1d1d;border-radius:12px;padding:16px;box-shadow:0 2px 8px #000}"
+    ".settingsBlock h2{margin:0 0 5px;color:#4dd0e1;font-size:1.15rem}"
+    ".settingsBlock p{margin:0 0 12px;color:#999;font-size:.86rem}"
+    ".settingsBlock label{display:block;color:#ddd;font-size:.9rem;margin-top:9px}"
+    ".settingsWide{grid-column:1/-1}"
+    ".settingsActions{grid-column:1/-1;text-align:center;margin-top:2px}"
+    ".tankCfg{display:grid;grid-template-columns:minmax(230px,1fr) minmax(210px,.9fr);gap:14px;align-items:center}"
+    ".tankPreview{background:#151a20;border:1px solid #303a44;border-radius:14px;padding:12px;text-align:center}"
+    ".tankPreview svg{width:100%;max-width:260px;height:auto}"
+    ".tankCalc{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}"
+    ".tankCalc .metric{background:#252c33;border-radius:9px;padding:8px}"
+    ".tankHint{color:#8ea0af;font-size:.82rem;margin-top:8px}"
+    ".dimMuted{opacity:.38}.dimActive{opacity:1}"
+    ".checkGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:8px}"
+    ".checkGrid label{margin:0;background:#252c33;border-radius:8px;padding:8px}"
+    ".inlineCheck{width:auto!important;margin-right:6px!important}"
+    ".displayPages{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:8px}"
+    ".displayPageBtn{background:#292f35;border:1px solid #4b5965;color:#eee;border-radius:9px;padding:8px}"
+    ".displayPageBtn.active{background:#1769aa;border-color:#39a9ff}"
+    ".displayPageStatus{margin-top:8px;color:#9fb0bd;font-size:.84rem}"
+    "@media(max-width:760px){.settingsGrid{grid-template-columns:1fr}.tankCfg{grid-template-columns:1fr}.tankCalc{grid-template-columns:1fr 1fr}}"
+    "</style>"
+    "<form method='POST' action='/save'>"
+    "<div class='settingsGrid'>"
+  ));
+
+  server.sendContent(F(
+    "<div class='settingsBlock'><h2>WLAN</h2><p>Netzwerkzugang des Geräts.</p>"
+    "<label>SSID</label><input name='ssid' value='"
+  ));
+  webSendSafe(String(cfg.wifiSsid));
+  server.sendContent(F(
+    "'><label>Passwort</label><input type='password' name='wpass' value='"
+  ));
+  webSendSafe(String(cfg.wifiPass));
+  server.sendContent(F("'></div>"));
+
+  server.sendContent(F(
+    "<div class='settingsBlock'><h2>Sensor</h2><p>ToF-Auswahl und Kalibrierung.</p>"
+    "<label>Typ</label><select name='sensor'><option value='0'"
+  ));
+  if(cfg.sensorType==SENSOR_AUTO) server.sendContent(F(" selected"));
+  server.sendContent(F(">Auto</option><option value='1'"));
+  if(cfg.sensorType==SENSOR_VL53L0X) server.sendContent(F(" selected"));
+  server.sendContent(F(">VL53L0X</option><option value='2'"));
+  if(cfg.sensorType==SENSOR_VL53L1X) server.sendContent(F(" selected"));
+  server.sendContent(F(
+    ">VL53L1X</option></select>"
+    "<label>Sensor-Offset mm</label><input type='number' name='offset' value='"
+  ));
+  webSendSafe(String(cfg.sensorOffsetMm));
+  server.sendContent(F(
+    "'><label>Leer-Distanz mm</label><input type='number' step='.1' name='empty' value='"
+  ));
+  webSendSafe(String(cfg.emptyDistanceMm,1));
+  server.sendContent(F(
+    "'><label>Voll-Distanz mm</label><input type='number' step='.1' name='full' value='"
+  ));
+  webSendSafe(String(cfg.fullDistanceMm,1));
+  server.sendContent(F("'></div>"));
+
+  server.sendContent(F(
+    "<div class='settingsBlock'><h2>AHT10 Klima</h2>"
+    "<p>I²C 0x38 · Temperatur, Luftfeuchte, Taupunkt und Kondensationsreserve.</p>"
+    "<label><input class='inlineCheck' type='checkbox' name='ahtEnabled'"
+  ));
+  if(cfg.ahtEnabled)server.sendContent(F(" checked"));
+  server.sendContent(F(
+    ">AHT10 aktiv</label>"
+    "<label>Temperatur-Offset °C</label>"
+    "<input type='number' step='0.1' min='-20' max='20' name='ahtTempOffset' value='"
+  ));
+  webSendSafe(String(cfg.ahtTemperatureOffsetC,1));
+  server.sendContent(F(
+    "'><label>Feuchte-Offset %</label>"
+    "<input type='number' step='0.1' min='-50' max='50' name='ahtHumOffset' value='"
+  ));
+  webSendSafe(String(cfg.ahtHumidityOffsetPercent,1));
+  server.sendContent(F(
+    "'><label>Messintervall Sekunden</label>"
+    "<input type='number' min='2' max='300' step='1' name='ahtIntervalS' value='"
+  ));
+  webSendSafe(String(cfg.ahtIntervalMs/1000UL));
+  server.sendContent(F(
+    "'><p class='tankHint'>Taupunkt und Kondensationsreserve werden aus den korrigierten Messwerten berechnet.</p>"
+    "</div>"
+  ));
+
+  server.sendContent(F(
+    "<div class='settingsBlock settingsWide'><h2>Tank</h2><p>Abmessungen, Geometrie und berechnete Kapazität.</p>"
+    "<div class='tankCfg'><div>"
+    "<label>Geometrie</label><select id='tankGeometry' name='geometry'><option value='0'"
+  ));
+  if(cfg.geometry==GEOMETRY_RECT) server.sendContent(F(" selected"));
+  server.sendContent(F(">Quader / Batterietank</option><option value='1'"));
+  if(cfg.geometry==GEOMETRY_CYLINDER) server.sendContent(F(" selected"));
+  server.sendContent(F(">Zylindertank</option></select>"));
+
+  server.sendContent(F("<div id='dimLength'><label>Länge mm</label><input id='tankLength' type='number' name='length' min='100' step='1' value='"));
+  webSendSafe(String(cfg.tankLengthMm,0));
+  server.sendContent(F("'></div>"));
+
+  server.sendContent(F("<div id='dimWidth'><label>Breite mm</label><input id='tankWidth' type='number' name='width' min='100' step='1' value='"));
+  webSendSafe(String(cfg.tankWidthMm,0));
+  server.sendContent(F("'></div>"));
+
+  server.sendContent(F("<div id='dimHeight'><label id='tankHeightLabel'>Tankhöhe mm</label><input id='tankHeight' type='number' name='height' min='100' step='1' value='"));
+  webSendSafe(String(cfg.tankHeightMm,0));
+  server.sendContent(F("'></div>"));
+
+  server.sendContent(F("<div id='dimDiameter'><label>Durchmesser mm</label><input id='tankDiameter' type='number' name='diameter' min='100' step='1' value='"));
+  webSendSafe(String(cfg.diameterMm,0));
+  server.sendContent(F(
+    "'></div><div id='tankFormulaHint' class='tankHint'></div>"
+    "</div>"
+    "<div class='tankPreview'>"
+    "<svg viewBox='0 0 260 220' xmlns='http://www.w3.org/2000/svg' aria-label='Tankvorschau'>"
+    "<defs>"
+    "<linearGradient id='cfgBody' x1='0' x2='0' y1='0' y2='1'><stop offset='0%' stop-color='#dfe6ec'/><stop offset='100%' stop-color='#8996a2'/></linearGradient>"
+    "<linearGradient id='cfgOil' x1='0' x2='0' y1='0' y2='1'><stop offset='0%' stop-color='#ffd45c'/><stop offset='100%' stop-color='#c57a00'/></linearGradient>"
+    "</defs>"
+    "<g id='cfgRectShape'><rect x='68' y='22' width='124' height='150' rx='28' fill='url(#cfgBody)' stroke='#52606c' stroke-width='3'/>"
+    "<rect x='78' y='34' width='104' height='126' rx='18' fill='#172027'/><rect x='80' y='98' width='100' height='60' fill='url(#cfgOil)'/>"
+    "<rect x='84' y='174' width='18' height='22' rx='3' fill='#6f7d89'/><rect x='158' y='174' width='18' height='22' rx='3' fill='#6f7d89'/></g>"
