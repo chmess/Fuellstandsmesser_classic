@@ -205,7 +205,8 @@ void webStreamBegin(const __FlashStringHelper* title) {
     "measured:'" LTXT_MEASURED "',testData:'" LTXT_TEST_DATA "',importText:'" LTXT_IMPORT "',days:'" LTXT_DAYS "',years:'" LTXT_YEARS "',months:'" LTXT_MONTHS "',"
     "noData:'" LTXT_NO_DATA "',loadingHistory:'" LTXT_HISTORY_LOADING "',monthlyComparison:'" LTXT_MONTHLY_COMPARISON "',loadingMonthly:'" LTXT_MONTHLY_LOADING "',"
     "error:'" LTXT_ERROR "',date:'" LTXT_DATE "',noRefills:'" LTXT_NO_CONFIRMED_REFILLS "',refillLoadError:'" LTXT_REFILLS_LOAD_ERROR "',"
-    "climate:'" LTXT_CLIMATE_DATA "',noClimateData:'" LTXT_NO_CLIMATE_DATA "',loaded:'" LTXT_LOADED "',points:'" LTXT_POINTS_LOWER "'"
+    "climate:'" LTXT_CLIMATE_DATA "',noClimateData:'" LTXT_NO_CLIMATE_DATA "',loaded:'" LTXT_LOADED "',points:'" LTXT_POINTS_LOWER "',"
+    "rectTank:'" LTXT_RECT_TANK "',cylTank:'" LTXT_CYL_TANK "'"
     "};</script>"));
 }
 
@@ -370,7 +371,7 @@ void handleRoot() {
     ".dash{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}.hero{grid-column:span 7}.side{grid-column:span 5}.wide{grid-column:span 12}"
     ".heroGrid{display:grid;grid-template-columns:minmax(260px,1.3fr) minmax(180px,.9fr);gap:14px;align-items:center}.heroInfo{min-width:0}"
     ".tankBox{display:flex;justify-content:center;align-items:center;background:linear-gradient(180deg,#1a1f26,#12161b);border:1px solid #2f3943;border-radius:16px;padding:10px;min-height:290px}"
-    ".tankSvg{width:100%;max-width:260px;height:auto;display:block}.tankLabel{font-size:12px;fill:#d8e3eb}.tankSmall{font-size:10px;fill:#91a4b5}.tankValue{font-size:15px;font-weight:700;fill:#ffffff}.tankTitle{font-size:14px;font-weight:700;fill:#dbe7ef}"
+    ".tankSvg{width:100%;max-width:260px;height:auto;display:block}.tankLabel{font-size:12px;fill:#d8e3eb}.tankSmall{font-size:10px;fill:#91a4b5}.tankValue{font-size:24px;font-weight:700;fill:#ffffff}.tankTitle{font-size:14px;font-weight:700;fill:#dbe7ef}"
     ".big{font-size:3rem;font-weight:800}.bar{height:16px;background:#333;border-radius:9px;overflow:hidden;margin:9px 0}.barFill{height:100%;width:0}"
     ".statusGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.status{background:#292929;border-radius:10px;padding:9px}"
   ));
@@ -391,45 +392,35 @@ void handleRoot() {
     "<linearGradient id='tankOilGrad' x1='0' x2='0' y1='0' y2='1'><stop id='oilTop' offset='0%' stop-color='#ffd35a'/><stop id='oilBottom' offset='100%' stop-color='#c97a00'/></linearGradient>"
   ));
   server.sendContent(F(
-    "<linearGradient id='tankBodyGrad' x1='0' x2='0' y1='0' y2='1'><stop offset='0%' stop-color='#e1e7ec'/><stop offset='100%' stop-color='#98a5b1'/></linearGradient>"
-    "<clipPath id='rectClip'><rect x='56' y='42' rx='22' ry='22' width='128' height='158'/></clipPath>"
-    "<clipPath id='cylClip'><rect x='28' y='72' rx='56' ry='56' width='184' height='112'/></clipPath>"
+    "<linearGradient id='tankBodyGrad' x1='0' x2='0' y1='0' y2='1'><stop offset='0%' stop-color='#eef3f7'/><stop offset='55%' stop-color='#bac5cf'/><stop offset='100%' stop-color='#7e8b97'/></linearGradient>"
+    "<linearGradient id='tankEdgeGrad' x1='0' x2='1'><stop offset='0%' stop-color='#53606c'/><stop offset='50%' stop-color='#d8e1e8'/><stop offset='100%' stop-color='#53606c'/></linearGradient>"
+    "<clipPath id='rectClip'><rect x='62' y='48' rx='18' ry='18' width='116' height='146'/></clipPath>"
+    "<clipPath id='cylClip'><rect x='31' y='74' rx='48' ry='48' width='178' height='104'/></clipPath>"
     "</defs>"
     "<g id='tankRectGroup'>"
-    "<rect x='44' y='28' rx='34' ry='34' width='152' height='184' fill='url(#tankBodyGrad)' stroke='#4c5964' stroke-width='3'/>"
-    "<rect x='56' y='42' rx='22' ry='22' width='128' height='158' fill='#182129' stroke='#6d7b88' stroke-width='2'/>"
-    "<rect id='oilFillRect' x='56' y='192' width='128' height='8' fill='url(#tankOilGrad)' clip-path='url(#rectClip)'/>"
-    "<path id='oilWaveRect' d='M56 192 C70 188 84 196 98 192 C112 188 126 196 140 192 C154 188 168 196 184 192 L184 200 L56 200 Z' fill='#ffe07a' opacity='.86' clip-path='url(#rectClip)'/>"
-  ));
-  server.sendContent(F(
-    "<line x1='56' y1='168.4' x2='184' y2='168.4' stroke='#ff6666' stroke-width='1.3' stroke-dasharray='5 4' opacity='.9'/>"
-    "<text x='188' y='172' class='tankSmall' fill='#ff8f8f'>20%</text>"
-    "<line x1='120' y1='14' x2='120' y2='28' stroke='#8895a2' stroke-width='4'/><rect x='108' y='6' width='24' height='10' rx='3' fill='#7f8d99'/>"
-    "<rect x='62' y='216' width='20' height='18' rx='3' fill='#6f7d8a'/><rect x='158' y='216' width='20' height='18' rx='3' fill='#6f7d8a'/>"
-    "<rect x='68' y='234' width='8' height='26' rx='2' fill='#6f7d8a'/><rect x='164' y='234' width='8' height='26' rx='2' fill='#6f7d8a'/>"
+    "<rect x='50' y='34' rx='30' ry='30' width='140' height='174' fill='url(#tankBodyGrad)' stroke='#46525d' stroke-width='3'/>"
+    "<rect x='57' y='41' rx='24' ry='24' width='126' height='160' fill='none' stroke='url(#tankEdgeGrad)' stroke-width='3' opacity='.9'/>"
+    "<rect x='62' y='48' rx='18' ry='18' width='116' height='146' fill='#151b21' stroke='#647481' stroke-width='2'/>"
+    "<rect id='oilFillRect' x='62' y='188' width='116' height='6' fill='url(#tankOilGrad)' clip-path='url(#rectClip)'/>"
+    "<path id='oilWaveRect' d='M62 188 C76 185 90 191 104 188 C118 185 132 191 146 188 C160 185 170 190 178 188 L178 194 L62 194 Z' fill='#ffe586' opacity='.82' clip-path='url(#rectClip)'/>"
+    "<line x1='120' y1='20' x2='120' y2='34' stroke='#8796a3' stroke-width='4'/><rect x='108' y='11' width='24' height='11' rx='3' fill='#788691'/>"
+    "<rect x='65' y='210' width='18' height='14' rx='3' fill='#7a8792'/><rect x='157' y='210' width='18' height='14' rx='3' fill='#7a8792'/>"
+    "<rect x='70' y='223' width='8' height='26' rx='2' fill='#7a8792'/><rect x='162' y='223' width='8' height='26' rx='2' fill='#7a8792'/>"
     "</g>"
     "<g id='tankCylGroup' style='display:none'>"
-    "<rect x='18' y='62' rx='66' ry='66' width='204' height='132' fill='url(#tankBodyGrad)' stroke='#4c5964' stroke-width='3'/>"
-    "<rect x='28' y='72' rx='56' ry='56' width='184' height='112' fill='#182129' stroke='#6d7b88' stroke-width='2'/>"
-  ));
-  server.sendContent(F(
-    "<rect id='oilFillCyl' x='28' y='176' width='184' height='8' fill='url(#tankOilGrad)' clip-path='url(#cylClip)'/>"
-    "<path id='oilWaveCyl' d='M28 176 C48 172 68 180 88 176 C108 172 128 180 148 176 C168 172 188 180 212 176 L212 184 L28 184 Z' fill='#ffe07a' opacity='.86' clip-path='url(#cylClip)'/>"
-    "<line x1='28' y1='161.6' x2='212' y2='161.6' stroke='#ff6666' stroke-width='1.3' stroke-dasharray='5 4' opacity='.9'/>"
-    "<text x='214' y='165' class='tankSmall' fill='#ff8f8f'>20%</text>"
-    "<line x1='120' y1='48' x2='120' y2='62' stroke='#8895a2' stroke-width='4'/><rect x='108' y='40' width='24' height='10' rx='3' fill='#7f8d99'/>"
-    "<rect x='54' y='194' width='22' height='12' rx='3' fill='#6f7d8a'/><rect x='164' y='194' width='22' height='12' rx='3' fill='#6f7d8a'/>"
+    "<rect x='20' y='62' rx='60' ry='60' width='200' height='128' fill='url(#tankBodyGrad)' stroke='#46525d' stroke-width='3'/>"
+    "<rect x='27' y='69' rx='53' ry='53' width='186' height='114' fill='none' stroke='url(#tankEdgeGrad)' stroke-width='3' opacity='.9'/>"
+    "<rect x='31' y='74' rx='48' ry='48' width='178' height='104' fill='#151b21' stroke='#647481' stroke-width='2'/>"
+    "<rect id='oilFillCyl' x='31' y='172' width='178' height='6' fill='url(#tankOilGrad)' clip-path='url(#cylClip)'/>"
+    "<path id='oilWaveCyl' d='M31 172 C51 169 71 175 91 172 C111 169 131 175 151 172 C171 169 191 175 209 172 L209 178 L31 178 Z' fill='#ffe586' opacity='.82' clip-path='url(#cylClip)'/>"
+    "<line x1='120' y1='48' x2='120' y2='62' stroke='#8796a3' stroke-width='4'/><rect x='108' y='39' width='24' height='11' rx='3' fill='#788691'/>"
+    "<rect x='55' y='191' width='20' height='12' rx='3' fill='#7a8792'/><rect x='165' y='191' width='20' height='12' rx='3' fill='#7a8792'/>"
     "</g>"
     LHTML_TANK_TITLE
-    "<rect x='68' y='88' width='104' height='78' rx='10' fill='#111820' opacity='.78'/>"
+    "<rect x='78' y='101' width='84' height='44' rx='9' fill='#10161c' stroke='#33414d' stroke-width='1.5' opacity='.96'/>"
   ));
   server.sendContent(F(
-    "<text x='120' y='110' text-anchor='middle' class='tankValue' id='tankPercentText'>-- %</text>"
-    "<text x='120' y='126' text-anchor='middle' class='tankSmall'>" LTXT_TANK_LEVEL "</text>"
-    "<text x='78' y='145' class='tankLabel'>Liter</text><text x='162' y='145' text-anchor='end' class='tankValue' id='tankLitersText'>-- L</text>"
-    LHTML_TANK_HEIGHT
-    "<text x='78' y='175' class='tankLabel'>Distanz</text><text x='162' y='175' text-anchor='end' class='tankValue' id='tankDistanceText'>-- mm</text>"
-    "<text x='120' y='270' text-anchor='middle' class='tankSmall'>Tankdarstellung · live</text>"
+    "<text x='120' y='129' text-anchor='middle' class='tankValue' id='tankPercentText'>-- %</text>"
     "</svg></div></div></div>"
     "<div class='tile side'><h2>" LTXT_CONSUMPTION "</h2><div class='grid'>"
     "<div class='metric'>" LTXT_TODAY "<b id='c1'>-- L</b></div><div class='metric'>7 " LTXT_DAYS "<b id='c7'>-- L</b></div>"
@@ -473,25 +464,25 @@ function updateTankSvg(percent, liters, heightMm, distanceMm, geometry){
   const rg=$('tankRectGroup'),cg=$('tankCylGroup');
   if(rg)rg.style.display=isCyl?'none':'';
   if(cg)cg.style.display=isCyl?'':'none';
-  $('tankShapeText').textContent=isCyl?'Liegender Zylindertank':'Batterie-/Quader-Tank';
+  if($('tankShapeText'))$('tankShapeText').textContent=isCyl?T.cylTank:T.rectTank;
 
   if(isCyl){
-    const top=72,innerH=112,bottom=184,fillH=Math.max(6,(p/100)*innerH),y=bottom-fillH;
+    const top=74,innerH=104,bottom=178,fillH=Math.max(5,(p/100)*innerH),y=bottom-fillH;
     const oil=$('oilFillCyl'),wave=$('oilWaveCyl');
 )JS");
   server.sendContent(R"JS(
     if(oil){oil.setAttribute('y',y.toFixed(1));oil.setAttribute('height',fillH.toFixed(1))}
     if(wave){
       const wy=Math.max(top+5,y);
-      wave.setAttribute('d','M28 '+wy+' C48 '+(wy-4)+' 68 '+(wy+4)+' 88 '+wy+' C108 '+(wy-4)+' 128 '+(wy+4)+' 148 '+wy+' C168 '+(wy-4)+' 188 '+(wy+4)+' 212 '+wy+' L212 184 L28 184 Z')
+      wave.setAttribute('d','M31 '+wy+' C51 '+(wy-3)+' 71 '+(wy+3)+' 91 '+wy+' C111 '+(wy-3)+' 131 '+(wy+3)+' 151 '+wy+' C171 '+(wy-3)+' 191 '+(wy+3)+' 209 '+wy+' L209 178 L31 178 Z')
     }
   }else{
-    const top=42,innerH=158,bottom=200,fillH=Math.max(6,(p/100)*innerH),y=bottom-fillH;
+    const top=48,innerH=146,bottom=194,fillH=Math.max(5,(p/100)*innerH),y=bottom-fillH;
     const oil=$('oilFillRect'),wave=$('oilWaveRect');
     if(oil){oil.setAttribute('y',y.toFixed(1));oil.setAttribute('height',fillH.toFixed(1))}
     if(wave){
       const wy=Math.max(top+5,y);
-      wave.setAttribute('d','M56 '+wy+' C70 '+(wy-4)+' 84 '+(wy+4)+' 98 '+wy+' C112 '+(wy-4)+' 126 '+(wy+4)+' 140 '+wy+' C154 '+(wy-4)+' 168 '+(wy+4)+' 184 '+wy+' L184 200 L56 200 Z')
+      wave.setAttribute('d','M62 '+wy+' C76 '+(wy-3)+' 90 '+(wy+3)+' 104 '+wy+' C118 '+(wy-3)+' 132 '+(wy+3)+' 146 '+wy+' C160 '+(wy-3)+' 170 '+(wy+3)+' 178 '+wy+' L178 194 L62 194 Z')
     }
   }
 
@@ -502,10 +493,9 @@ function updateTankSvg(percent, liters, heightMm, distanceMm, geometry){
   if(topStop)topStop.setAttribute('stop-color',low?'#ff7a70':(mid?'#ffd35a':'#7edb88'));
   if(botStop)botStop.setAttribute('stop-color',low?'#b42424':(mid?'#c97a00':'#23863a'));
 
-  $('tankPercentText').textContent=f(p)+' %';
-  $('tankLitersText').textContent=f(liters)+' L';
-  $('tankHeightText').textContent=f(heightMm)+' mm';
-  $('tankDistanceText').textContent=f(distanceMm)+' mm';
+  if($('tankPercentText'))$('tankPercentText').textContent=f(p)+' %';
+  if($('tankLitersText'))$('tankLitersText').textContent=f(liters)+' L';
+  if($('tankHeightText'))$('tankHeightText').textContent=f(heightMm)+' mm';
 }
 
 async function status(){
