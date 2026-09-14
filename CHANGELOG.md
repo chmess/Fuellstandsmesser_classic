@@ -1,5 +1,22 @@
 # Changelog / Änderungsprotokoll
 
+## V0.12.3 I18N FIX4.3 — 2026-09-14
+
+### Deutsch
+- Tankgrafik im Dashboard auf eine zentrale Prozentanzeige reduziert
+- überlagerte Tanktexte entfernt
+- dynamische Dashboard-Daten repariert
+- JavaScript-Fehler in `updateTankSvg()` behoben
+- keine Änderung an MQTT, API/JSON, Config V7 oder History V3
+
+### English
+- dashboard tank graphic reduced to one centered percentage value
+- overlapping tank text removed
+- dynamic dashboard data refresh repaired
+- JavaScript error in `updateTankSvg()` fixed
+- no changes to MQTT, API/JSON, Config V7 or History V3
+
+
 ## Deutsch
 
 ### V0.12.3 I18N FIX3 — 2026-09-14
