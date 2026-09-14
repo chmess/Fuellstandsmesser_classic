@@ -1,18 +1,7 @@
-# Serielle CLI
+# Serielle CLI / Serial CLI
 
-Baudrate:
-
-```text
-115200
-```
-
-Prompt:
-
-```text
-fuell>
-```
-
-## Befehle
+Baudrate / baud rate: **115200**  
+Prompt: `fuell>`
 
 ```text
 help
@@ -20,7 +9,7 @@ help
 wifi status
 wifi scan
 wifi ssid <SSID>
-wifi pass <PASSWORT>
+wifi pass <PASSWORT|PASSWORD>
 wifi save
 wifi connect
 wifi disconnect
@@ -31,13 +20,8 @@ mqtt test
 mqtt reconnect
 ```
 
-## Beispiel
+## Deutsch
+Das WLAN-Passwort wird in Statusausgaben nicht im Klartext ausgegeben. Befehlsnamen bleiben sprachunabhängig; sichtbare Meldungen folgen soweit lokalisiert der gewählten Build-Sprache.
 
-```text
-wifi ssid MeinWLAN
-wifi pass MeinPasswort
-wifi save
-wifi connect
-```
-
-Das WLAN-Passwort wird bei Statusausgaben nicht im Klartext ausgegeben.
+## English
+The Wi-Fi password is not printed in clear text in status output. Command names remain language-independent; localized output follows the selected build language.
