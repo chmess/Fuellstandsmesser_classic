@@ -1734,3 +1734,212 @@ void handleStorageStatus() {
     server.sendContent(F(
       "<div class='card'><h2>Mögliche Tageshistorie</h2><table>"
     ));
+
+    const uint8_t sizes[]={16,20,24,32};
+    for(uint8_t i=0;i<4;i++){
+      const uint32_t recs=freeB/sizes[i];
+      String label=String(sizes[i])+F(" Byte/Tag");
+      if(sizes[i]==sizeof(DailyHistoryRecord))label+=F(" (aktuell)");
+      String value=String(recs)+F(" Tage / ca. ")+
+                   String((float)recs/365.25f,1)+F(" Jahre");
+
+      if(sizes[i]==sizeof(DailyHistoryRecord)){
+        server.sendContent(F("<tr style='font-weight:700;color:#65e572'><td>"));
+      }else{
+        server.sendContent(F("<tr><td>"));
+      }
+
+      webSendSafe(label);
+      server.sendContent(F("</td><td>"));
+      webSendSafe(value);
+      server.sendContent(F("</td></tr>"));
+      yield();
+    }
+
+    server.sendContent(F(
+      "</table><p class='muted'>Historie verwendet aktuell "
+    ));
+    server.sendContent(String(sizeof(DailyHistoryRecord)));
+    server.sendContent(F(
+      " Byte pro Tag (History V3 mit Klima). Für LittleFS wird zusätzlich Reserve für Konfiguration, "
+      "Import und temporäre Dateien benötigt.</p></div>"
+    ));
+  }
+
+  if(fsMounted){
+    server.sendContent(F(
+      "<div class='card'><h2>LittleFS-Dateien</h2>"
+      "<p class='muted'>Damit ist direkt sichtbar, welche Datei den Flash belegt.</p>"
+      "<div style='overflow-x:auto'><table><tr><th>Datei</th><th>Größe</th><th>Anteil</th></tr>"
+    ));
+
+    Dir dir=LittleFS.openDir("/");
+    uint32_t listedBytes=0;
+    uint16_t fileCount=0;
+
+    while(dir.next()){
+      const String name=dir.fileName();
+      const uint32_t size=(uint32_t)dir.fileSize();
+      listedBytes+=size;
+      fileCount++;
+
+      server.sendContent(F("<tr><td><code>"));
+      webSendSafe(name);
+      server.sendContent(F("</code></td><td>"));
+      webSendSafe(String(size)+F(" B / ")+String(size/1024.0f,1)+F(" KB"));
+      server.sendContent(F("</td><td>"));
+
+      float pct=0.0f;
+      if(fsInfoCache.totalBytes>0)pct=(100.0f*(float)size)/(float)fsInfoCache.totalBytes;
+      webSendSafe(String(pct,1)+F(" %"));
+      server.sendContent(F("</td></tr>"));
+      yield();
+    }
+
+    server.sendContent(F("</table></div><p class='muted'>"));
+    webSendSafe(String(fileCount));
+    server.sendContent(F(" Dateien aufgelistet · Dateisumme "));
+    webSendSafe(String(listedBytes/1024.0f,1));
+    server.sendContent(F(" KB. Die LittleFS-Belegung kann zusätzlich Dateisystem-Overhead enthalten.</p>"));
+
+    server.sendContent(F(
+      "<div class='topbar' style='margin-top:14px;gap:10px;flex-wrap:wrap'>"
+      "<form method='POST' action='/storage/cleanup-temp' "
+      "onsubmit=\"return confirm('Bekannte Temp-, Index- und Backup-Dateien löschen? Die aktive History und die hochgeladene Importdatei bleiben erhalten.');\">"
+      "<button type='submit'>Temp-/Backup-Dateien aufräumen</button></form>"
+      "<form method='POST' action='/history/maintenance/compact' "
+      "onsubmit=\"return confirm('History kompakt neu schreiben und direkt aufeinanderfolgende Duplikate entfernen?');\">"
+      "<button type='submit'>History kompakt neu schreiben</button></form>"
+      "<a class='btn' href='/history/maintenance'>History-Wartung</a>"
+      "</div>"
+      "<p class='muted' style='margin-top:12px'>"
+      "Der Aufräum-Button löscht niemals <code>/history.bin</code> und niemals <code>/history_import.csv</code>. "
+      "Entfernt werden nur bekannte temporäre Index-, Repair-, Filter- und Compact-Dateien.</p>"
+      "</div>"
+    ));
+  }
+
+  webStreamEnd();
+
+  const uint32_t heapAfter=ESP.getFreeHeap();
+  Serial.print(F("[WEB] /storage heap after="));
+  Serial.print(heapAfter);
+  Serial.print(F(" delta="));
+  Serial.println((int32_t)heapAfter-(int32_t)heapBefore);
+}
+
+void handleFactoryReset() {
+  setDefaults();
+  saveConfig();
+
+  server.send(
+    200,
+    "text/html; charset=utf-8",
+    F("<html><body><h1>Werkseinstellungen geladen</h1>"
+      "<p>Das Geraet startet neu.</p></body></html>")
+  );
+
+  delay(500);
+  ESP.restart();
+}
+
+void handleDisplayPageApi() {
+  if(!server.hasArg("page")){
+    server.send(400,"application/json; charset=utf-8","{\"ok\":false,\"error\":\"page_missing\"}");
+    return;
+  }
+
+  int page=server.arg("page").toInt();
+  if(page<0 || page>4){
+    server.send(400,"application/json; charset=utf-8","{\"ok\":false,\"error\":\"page_out_of_range\"}");
+    return;
+  }
+
+  displayPage=(uint8_t)page;
+  lastDisplayPageMs=millis();
+  drawDisplay();
+
+  Serial.print(F("[LCD] manuelle Seite "));
+  Serial.print(displayPage+1);
+  Serial.print(F("/5 "));
+  switch(displayPage){
+    case 0: Serial.println(F("Fuellstand")); break;
+    case 1: Serial.println(F("Sensor")); break;
+    case 2: Serial.println(F("Netzwerk")); break;
+    case 3: Serial.println(F("System")); break;
+    default: Serial.println(F("Klima")); break;
+  }
+
+  String s=F("{\"ok\":true,\"page\":");
+  s+=String(displayPage);
+  s+=F(",\"auto\":");
+  s+=cfg.displayAutoRotate?F("true"):F("false");
+  s+=F(",\"seconds\":");
+  s+=String(cfg.displayPageSeconds);
+  s+=F("}");
+  server.send(200,"application/json; charset=utf-8",s);
+}
+
+void setupWeb() {
+  server.on("/", HTTP_GET, [](){
+    Serial.print(F("[WEB] / heap before=")); Serial.println(ESP.getFreeHeap());
+    handleRoot();
+    Serial.print(F("[WEB] / heap after=")); Serial.println(ESP.getFreeHeap());
+  });
+  server.on("/api/status", HTTP_GET, handleApiStatus);
+  server.on("/api/display/page", HTTP_POST, handleDisplayPageApi);
+  server.on("/api/health", HTTP_GET, handleHealthApi);
+  server.on("/settings", HTTP_GET, handleSettings);
+  server.on("/systemstatus", HTTP_GET, handleSystemStatusPage);
+  server.on("/update", HTTP_GET, handleWebOtaPage);
+  server.on("/update", HTTP_POST, handleWebOtaDone, handleWebOtaUpload);
+  server.on("/save", HTTP_POST, handleSave);
+  server.on("/factory-reset", HTTP_GET, handleFactoryReset);
+  server.on("/storage", HTTP_GET, handleStorageStatus);
+  server.on("/storage/cleanup-temp", HTTP_POST, handleStorageCleanupTemp);
+  server.on("/history", HTTP_GET, [](){
+    Serial.print(F("[WEB] /history heap before=")); Serial.println(ESP.getFreeHeap());
+    handleHistoryPage();
+    Serial.print(F("[WEB] /history heap after=")); Serial.println(ESP.getFreeHeap());
+  });
+  server.on("/api/history", HTTP_GET, handleHistoryApi);
+  server.on("/api/history/climate", HTTP_GET, handleClimateHistoryApi);
+  server.on("/api/monthly-comparison", HTTP_GET, handleMonthlyComparisonApi);
+  server.on("/api/recent-refills", HTTP_GET, handleRecentRefills);
+  server.on("/history.csv", HTTP_GET, handleHistoryCsv);
+  server.on("/history/import", HTTP_GET, handleHistoryImportPage);
+  server.on("/history/import/preview", HTTP_POST, handleHistoryImportPreview, handleHistoryImportUpload);
+  server.on("/history/import/apply", HTTP_POST, handleHistoryImportApply);
+  server.on("/history/import/cancel", HTTP_POST, handleHistoryImportCancel);
+  server.on("/history/maintenance", HTTP_GET, handleHistoryMaintenancePage);
+  server.on("/history/maintenance/compact", HTTP_POST, handleHistoryCompactDuplicates);
+  server.on("/history/maintenance/repair", HTTP_POST, handleHistoryMaintenanceRepair);
+  server.on("/history/maintenance/delete-test", HTTP_POST, handleHistoryDeleteTestData);
+  server.on("/history/maintenance/delete-imported", HTTP_POST, handleHistoryDeleteImportedData);
+  server.on("/generate-test-history", HTTP_POST, handleGenerateTestHistory);
+  server.on("/generate-test-history-10y", HTTP_POST, handleGenerate10YearTestHistory);
+  server.on("/clear-history", HTTP_POST, handleClearHistory);
+
+  server.on("/reboot", HTTP_GET, []() {
+    server.send(200, "text/plain", "Reboot");
+    delay(200);
+    ESP.restart();
+  });
+
+  server.onNotFound(handleNotFound);
+  server.begin();
+
+  Serial.println(F("[WEB] gestartet"));
+  Serial.println(F("[OTA] ArduinoOTA entfernt - Web OTA bleibt aktiv"));
+  Serial.println(F("[WEB] Safe-Chunk fuer leere Konfigurationswerte aktiv"));
+  Serial.println(F("[WEB] HTTP KeepAlive AUS / Connection close aktiv"));
+  Serial.println(F("[RAM] String-Free History/CSV/Web Helfer aktiv"));
+  Serial.println(F("[UI] Klima in Dashboard-/Historiegrafik integriert"));
+  Serial.println(F("[FIX] History JS Loader + Tooltip wiederhergestellt"));
+  Serial.println(F("[SYSTEM] LittleFS Gesamt/Belegt/Frei + beruhigte Heap-Diagnose"));
+  Serial.println(F("[UI] Dashboard/Historie kompakt + Klima-Schalter dynamisch"));
+  Serial.println(F("[FIX] Web-Number-Helper Prototypen vor History API"));
+  Serial.println(F("[HA] Discovery ENTFERNT - MQTT Topics bleiben aktiv"));
+  Serial.print(F("[MQTT] Buffer="));Serial.println(MQTT_BUFFER_NORMAL);
+}
+
