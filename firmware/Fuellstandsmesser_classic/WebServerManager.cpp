@@ -1238,3 +1238,252 @@ void handleApiStatus() {
   jsonSendKey(F("consumption_7d_l"));jsonSendFloatValue(c7,1);server.sendContent(F(","));
   jsonSendKey(F("consumption_30d_l"));jsonSendFloatValue(c30,1);server.sendContent(F(","));
   jsonSendKey(F("consumption_365d_l"));jsonSendFloatValue(c365,1);server.sendContent(F(","));
+  jsonSendKey(F("consumption_avg_30d_l_day"));jsonSendFloatValue(c30/30.0f,1);server.sendContent(F(","));
+
+  jsonSendKey(F("wifi_connected"));jsonSendBoolValue(WiFi.status()==WL_CONNECTED);server.sendContent(F(","));
+  jsonSendKey(F("mqtt_connected"));jsonSendBoolValue(mqttClient.connected());server.sendContent(F(","));
+  jsonSendKey(F("spiffs_ready"));jsonSendBoolValue(fsMounted);server.sendContent(F(","));
+  jsonSendKey(F("history_ready"));jsonSendBoolValue(historyReady);server.sendContent(F(","));
+  jsonSendKey(F("ota_ready"));jsonSendBoolValue(true);server.sendContent(F(","));
+
+  jsonSendKey(F("rssi"));
+  jsonSendIntValue(WiFi.status()==WL_CONNECTED?WiFi.RSSI():0);
+  server.sendContent(F(","));
+
+  jsonSendKey(F("date"));jsonSendStringValue(dateBuf);server.sendContent(F(","));
+  jsonSendKey(F("time"));jsonSendStringValue(timeBuf);server.sendContent(F(","));
+
+  jsonSendKey(F("mqtt_publish_ok"));jsonSendUIntValue(mqttPublishCount);server.sendContent(F(","));
+  jsonSendKey(F("mqtt_publish_errors"));jsonSendUIntValue(mqttPublishErrors);
+
+  server.sendContent(F("}"));
+  jsonChunkEnd();
+
+  const uint32_t heapAfter=ESP.getFreeHeap();
+  Serial.print(F("[API STATUS] heap before="));
+  Serial.print(heapBefore);
+  Serial.print(F(" after="));
+  Serial.print(heapAfter);
+  Serial.print(F(" delta="));
+  Serial.println((int32_t)heapAfter-(int32_t)heapBefore);
+}
+
+
+void handleHealthApi() {
+  const uint32_t heapBefore=ESP.getFreeHeap();
+
+  jsonChunkBegin();
+  server.sendContent(F("{"));
+
+  jsonSendKey(F("version"));jsonSendStringValue(String(FW_VERSION));server.sendContent(F(","));
+  jsonSendKey(F("uptime_s"));jsonSendNumberValue(String(millis()/1000UL));server.sendContent(F(","));
+  jsonSendKey(F("heap_free"));jsonSendNumberValue(String(ESP.getFreeHeap()));server.sendContent(F(","));
+  jsonSendKey(F("heap_min"));jsonSendNumberValue(String(minFreeHeapSeen));server.sendContent(F(","));
+  jsonSendKey(F("max_block"));jsonSendNumberValue(String(ESP.getMaxFreeBlockSize()));server.sendContent(F(","));
+  jsonSendKey(F("max_block_min"));jsonSendNumberValue(String(lowestMaxBlockSeen?lowestMaxBlockSeen:ESP.getMaxFreeBlockSize()));server.sendContent(F(","));
+  jsonSendKey(F("heap_frag_pct"));jsonSendNumberValue(String(ESP.getHeapFragmentation()));server.sendContent(F(","));
+  jsonSendKey(F("heap_frag_max_pct"));jsonSendNumberValue(String(highestHeapFragSeen));server.sendContent(F(","));
+  jsonSendKey(F("web_requests"));jsonSendNumberValue(String(webRequestCount));server.sendContent(F(","));
+  jsonSendKey(F("low_heap_events"));jsonSendNumberValue(String(webLowHeapEvents));server.sendContent(F(","));
+  jsonSendKey(F("history_api_requests"));jsonSendNumberValue(String(historyApiRequests));server.sendContent(F(","));
+  jsonSendKey(F("history_api_errors"));jsonSendNumberValue(String(historyApiErrors));server.sendContent(F(","));
+  jsonSendKey(F("history_api_last_ms"));jsonSendNumberValue(String(historyApiLastMs));server.sendContent(F(","));
+  jsonSendKey(F("history_api_last_items"));jsonSendNumberValue(String(historyApiLastItems));server.sendContent(F(","));
+  jsonSendKey(F("history_write_errors"));jsonSendNumberValue(String(historyWriteErrors));server.sendContent(F(","));
+  jsonSendKey(F("history_repair_duplicates"));jsonSendNumberValue(String(historyRepairDuplicates));server.sendContent(F(","));
+  jsonSendKey(F("history_repair_invalid"));jsonSendNumberValue(String(historyRepairInvalid));server.sendContent(F(","));
+  jsonSendKey(F("history_repair_removed"));jsonSendNumberValue(String(historyRepairRemoved));server.sendContent(F(","));
+  jsonSendKey(F("history_repair_performed"));jsonSendBoolValue(historyRepairPerformed);server.sendContent(F(","));
+  jsonSendKey(F("history_compact_duplicates"));jsonSendNumberValue(String(historyCompactDuplicates));server.sendContent(F(","));
+  jsonSendKey(F("history_compact_invalid"));jsonSendNumberValue(String(historyCompactInvalid));server.sendContent(F(","));
+  jsonSendKey(F("history_compact_performed"));jsonSendBoolValue(historyCompactPerformed);server.sendContent(F(","));
+  jsonSendKey(F("history_current_day"));jsonSendNumberValue(historyCurrentValid?String(historyCurrent.dayKey):String(0));server.sendContent(F(","));
+  jsonSendKey(F("history_current_source"));jsonSendNumberValue(historyCurrentValid?String(historyCurrent.source):String(255));server.sendContent(F(","));
+  jsonSendKey(F("mqtt_publish_errors"));jsonSendNumberValue(String(mqttPublishErrors));server.sendContent(F(","));
+  jsonSendKey(F("mqtt_connect_errors"));jsonSendNumberValue(String(mqttConnectErrors));server.sendContent(F(","));
+  jsonSendKey(F("mqtt_retry_ms"));jsonSendNumberValue(String(mqttRetryIntervalMs));server.sendContent(F(","));
+  jsonSendKey(F("mqtt_dns_ok"));jsonSendBoolValue(mqttLastDnsOk);server.sendContent(F(","));
+  jsonSendKey(F("mqtt_tcp_ok"));jsonSendBoolValue(mqttLastTcpOk);server.sendContent(F(","));
+  jsonSendKey(F("mqtt_last_connect_ms"));jsonSendNumberValue(String(mqttLastConnectDurationMs));server.sendContent(F(","));
+
+  jsonSendKey(F("measurement_errors"));jsonSendNumberValue(String(measurementErrors));server.sendContent(F(","));
+  jsonSendKey(F("aht_ok"));jsonSendBoolValue(ahtOk);server.sendContent(F(","));
+  jsonSendKey(F("aht_reads"));jsonSendNumberValue(String(ahtReadCount));server.sendContent(F(","));
+  jsonSendKey(F("aht_errors"));jsonSendNumberValue(String(ahtErrorCount));server.sendContent(F(","));
+  jsonSendKey(F("aht_recoveries"));jsonSendNumberValue(String(ahtRecoveryCount));server.sendContent(F(","));
+  jsonSendKey(F("aht_initialized"));jsonSendBoolValue(ahtInitialized);server.sendContent(F(","));
+  jsonSendKey(F("aht_probes"));jsonSendNumberValue(String(ahtProbeCount));server.sendContent(F(","));
+  jsonSendKey(F("aht_consecutive_errors"));jsonSendNumberValue(String(ahtConsecutiveErrors));server.sendContent(F(","));
+  jsonSendKey(F("aht_status"));jsonSendStringValue(String(ahtStatusText()));server.sendContent(F(","));
+  jsonSendKey(F("aht_age_s"));jsonSendNumberValue(lastAhtValidMs?String((millis()-lastAhtValidMs)/1000UL):String(0));server.sendContent(F(","));
+  jsonSendKey(F("startup_filter_stable"));jsonSendBoolValue(startupMeasurementStable);server.sendContent(F(","));
+  jsonSendKey(F("startup_filter_confirm"));jsonSendNumberValue(String(startupCandidateCount));server.sendContent(F(","));
+  jsonSendKey(F("wifi_reconnects"));jsonSendNumberValue(String(wifiReconnectCount));server.sendContent(F(","));
+  jsonSendKey(F("cli_commands"));jsonSendNumberValue(String(cliCommandCount));server.sendContent(F(","));
+  jsonSendKey(F("cli_errors"));jsonSendNumberValue(String(cliErrorCount));server.sendContent(F(","));
+  jsonSendKey(F("cli_wifi_dirty"));jsonSendBoolValue(cliWifiDirty);server.sendContent(F(","));
+  jsonSendKey(F("web_ota_attempts"));jsonSendNumberValue(String(webOtaAttempts));server.sendContent(F(","));
+  jsonSendKey(F("web_ota_success"));jsonSendNumberValue(String(webOtaSuccessCount));server.sendContent(F(","));
+  jsonSendKey(F("web_ota_errors"));jsonSendNumberValue(String(webOtaErrorCount));server.sendContent(F(","));
+  jsonSendKey(F("reset"));jsonSendStringValue(String(resetReasonShort()));
+
+  server.sendContent(F("}"));
+  jsonChunkEnd();
+
+  const uint32_t heapAfter=ESP.getFreeHeap();
+  Serial.print(F("[API HEALTH] heap before="));
+  Serial.print(heapBefore);
+  Serial.print(F(" after="));
+  Serial.print(heapAfter);
+  Serial.print(F(" delta="));
+  Serial.println((int32_t)heapAfter-(int32_t)heapBefore);
+}
+
+
+void handleWebOtaPage() {
+  webStreamBegin(F("Web OTA"));
+  webStreamNav(3);
+  server.sendContent(F(
+    "<div class='card'><h1>Firmware Update</h1>"
+    "<p>ESP8266 Firmware als <b>.bin</b> hochladen.</p>"
+    "<p class='muted'>Während des Uploads Messung, MQTT und Historie nicht bedienen. "
+    "Nach erfolgreichem Update startet das Gerät automatisch neu.</p>"
+    "<div class='grid'>"
+    "<div class='metric-card'><h3>Firmware</h3><div>"
+  ));
+  server.sendContent(String(FW_VERSION));
+  server.sendContent(F(
+    "</div></div><div class='metric-card'><h3>Freier Sketch-/OTA-Speicher</h3><div>"
+  ));
+  server.sendContent(String(ESP.getFreeSketchSpace()/1024UL));
+  server.sendContent(F(
+    " KB</div></div><div class='metric-card'><h3>Heap frei</h3><div>"
+  ));
+  server.sendContent(String(ESP.getFreeHeap()/1024.0f,1));
+  server.sendContent(F(
+    " KB</div></div></div>"
+    "<form method='POST' action='/update' enctype='multipart/form-data' "
+    "onsubmit=\"document.getElementById('upbtn').disabled=true;document.getElementById('msg').textContent='Upload läuft …';\">"
+    "<input type='file' name='firmware' accept='.bin,application/octet-stream' required>"
+    "<button id='upbtn' type='submit'>Firmware hochladen</button></form>"
+    "<p id='msg' class='muted'></p>"
+    "<p><a class='btn' href='/systemstatus'>Zurück</a></p></div>"
+  ));
+  webStreamEnd();
+}
+
+void handleWebOtaUpload() {
+  HTTPUpload& upload = server.upload();
+
+  if(upload.status == UPLOAD_FILE_START) {
+    webOtaActive = true;
+    webOtaAttempts++;
+    webOtaSuccess = false;
+    webOtaBytes = 0;
+    webOtaError = "";
+
+    Serial.print(F("[WEB OTA] Start Datei="));
+    Serial.println(upload.filename);
+    Serial.print(F("[WEB OTA] Heap="));
+    Serial.println(ESP.getFreeHeap());
+
+    WiFiUDP::stopAll();
+    mqttClient.disconnect();
+
+    const uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+    if(!Update.begin(maxSketchSpace)) {
+      webOtaError = Update.getErrorString();
+      webOtaErrorCount++;
+      Serial.print(F("[WEB OTA] Update.begin FEHLER: "));
+      Serial.println(webOtaError);
+    }
+  }
+  else if(upload.status == UPLOAD_FILE_WRITE) {
+    if(webOtaError.length()) return;
+
+    const size_t written = Update.write(upload.buf, upload.currentSize);
+    webOtaBytes += written;
+
+    if(written != upload.currentSize) {
+      webOtaError = Update.getErrorString();
+      webOtaErrorCount++;
+      Serial.print(F("[WEB OTA] Schreibfehler: "));
+      Serial.println(webOtaError);
+      return;
+    }
+
+    if((webOtaBytes & 0xFFFFUL) < upload.currentSize) {
+      Serial.print(F("[WEB OTA] "));
+      Serial.print(webOtaBytes/1024UL);
+      Serial.println(F(" KB"));
+    }
+
+    yield();
+  }
+  else if(upload.status == UPLOAD_FILE_END) {
+    if(!webOtaError.length()) {
+      if(Update.end(true)) {
+        webOtaSuccess = true;
+        webOtaSuccessCount++;
+        Serial.print(F("[WEB OTA] OK Bytes="));
+        Serial.println(webOtaBytes);
+      } else {
+        webOtaError = Update.getErrorString();
+        webOtaErrorCount++;
+        Serial.print(F("[WEB OTA] Update.end FEHLER: "));
+        Serial.println(webOtaError);
+      }
+    }
+  }
+  else if(upload.status == UPLOAD_FILE_ABORTED) {
+    webOtaError = F("Upload abgebrochen");
+    webOtaErrorCount++;
+    Serial.println(F("[WEB OTA] abgebrochen"));
+  }
+}
+
+void handleWebOtaDone() {
+  webOtaActive = false;
+
+  if(webOtaSuccess) {
+    server.send(200, "text/html; charset=utf-8",
+      "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+      "<meta http-equiv='refresh' content='12;url=/'></head><body style='font-family:Arial;background:#111;color:#eee;padding:30px'>"
+      "<h1 style='color:#65e572'>Update erfolgreich</h1>"
+      "<p>Das Gerät startet jetzt neu.</p><p>Die Startseite wird automatisch neu geladen.</p></body></html>");
+    delay(250);
+    ESP.restart();
+    return;
+  }
+
+  String msg = F("Web OTA fehlgeschlagen: ");
+  msg += webOtaError.length() ? webOtaError : F("unbekannter Fehler");
+  server.send(500, "text/plain; charset=utf-8", msg);
+}
+
+void webMetricCard(const __FlashStringHelper* title,const String& value){
+  server.sendContent(F("<div class='metric-card'><h3>"));
+  server.sendContent(title);
+  server.sendContent(F("</h3><div>"));
+  webSendSafe(value);
+  server.sendContent(F("</div></div>"));
+}
+
+void webMetricCardUInt(const __FlashStringHelper* title,uint32_t value,const __FlashStringHelper* suffix){
+  server.sendContent(F("<div class='metric'><span>"));
+  server.sendContent(title);
+  server.sendContent(F("</span><b>"));
+  webSendUInt(value);
+  if(suffix)server.sendContent(suffix);
+  server.sendContent(F("</b></div>"));
+}
+
+void webMetricCardFloat(const __FlashStringHelper* title,float value,uint8_t decimals,const __FlashStringHelper* suffix){
+  server.sendContent(F("<div class='metric'><span>"));
+  server.sendContent(title);
+  server.sendContent(F("</span><b>"));
+  webSendFloat(value,decimals);
+  if(suffix)server.sendContent(suffix);
+  server.sendContent(F("</b></div>"));
+}
+
