@@ -1942,3 +1942,395 @@ bool historyGenerateFast(uint16_t days) {
   for (uint16_t i = 0; i < days; ++i) {
     const time_t ts = start + (time_t)i * 86400;
     struct tm d;
+    localtime_r(&ts, &d);
+
+    float seasonal =
+      1.0f + 0.55f *
+      cosf((((float)d.tm_yday - 15.0f) / 365.0f) * 6.2831853f);
+
+    float daily =
+      cap * 0.0012f * seasonal *
+      (1.0f + 0.08f * sinf((float)i * 1.731f));
+
+    daily = constrain(daily, 0.1f, cap * 0.01f);
+
+    uint16_t refill = 0;
+    uint16_t cons = (uint16_t)constrain((int)lroundf(daily), 0, 65535);
+
+    level -= daily;
+
+    if (level < cap * 0.25f || (i > 30 && (i % 170) == 0)) {
+      float before = level;
+      level = min(cap * 0.92f, level + cap * 0.60f);
+      refill = (uint16_t)constrain((int)lroundf(max(0.0f, level - before)), 0, 65535);
+      cons = 0;
+      refills++;
+    }
+
+    DailyHistoryRecord r = {};
+    historyClimateClear(r);
+    r.dayKey = historyDayKeyFromTime(ts);
+    r.samples = 1;
+    r.levelLiters = (uint16_t)constrain((int)lroundf(level), 0, 65535);
+
+    uint16_t p = (uint16_t)constrain(
+      (int)lroundf(historyPercentForLiters(r.levelLiters) * 10.0f),
+      0, 1000);
+
+    r.avgPermille = p;
+    r.minPermille = p;
+    r.maxPermille = p;
+    r.firstLiters = r.levelLiters;
+    r.consumptionLiters = cons;
+    r.refillLiters = refill;
+    r.source = HISTORY_TEST;
+    r.flags = 0;
+    r.crc16 = historyRecordCrc(r);
+
+    if (f.write(reinterpret_cast<const uint8_t*>(&r), sizeof(r)) != sizeof(r)) {
+      f.close();
+      Serial.print(F("[HISTORY] Testdaten Schreibfehler bei Tag "));
+      Serial.println(i);
+      historyReady = false;
+      return false;
+    }
+
+    if ((i & 0x1F) == 0) {
+      yield();
+
+      if ((i % 365) == 0 || i + 1 == days) {
+        Serial.print(F("[HISTORY] Testdaten Fortschritt: "));
+        Serial.print(i + 1);
+        Serial.print('/');
+        Serial.println(days);
+      }
+    }
+  }
+
+  f.flush();
+  f.close();
+
+  historyReady = true;
+  historyCurrentValid = false;
+  historyWriteCount += days;
+  historyInvalidateStatsCache();
+
+  Serial.print(F("[HISTORY] Testdaten fertig: "));
+  Serial.print(days);
+  Serial.print(F(" Tage, Nachfuellungen="));
+  Serial.println(refills);
+
+  return true;
+}
+
+void historyGenerate(uint16_t days) {
+  historyGenerateFast(days);
+}
+
+void handleGenerateTestHistory(){historyGenerate(365);server.sendHeader("Location","/history",true);server.send(303,"text/plain","");}
+
+void handleGenerate10YearTestHistory(){historyGenerate(3650);server.sendHeader("Location","/history",true);server.send(303,"text/plain","");}
+
+void handleClearHistory(){
+  if(!server.hasArg("confirmText") || server.arg("confirmText")!="LOESCHEN"){
+    Serial.println(F("[HISTORY] Loeschen ABGEBROCHEN: Sicherheitsbestaetigung fehlt/falsch"));
+
+    String html;
+    html.reserve(520);
+    html=F("<!doctype html><html><head><meta charset='utf-8'>"
+           "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+           "<title>Historie nicht geloescht</title></head>"
+           "<body style='font-family:sans-serif;background:#111;color:#eee;padding:20px'>"
+           "<h2>Historie NICHT geloescht</h2>"
+           "<p>Die Sicherheitsbestaetigung war nicht korrekt.</p>"
+           "<p>Zum Loeschen muss exakt <b>LOESCHEN</b> eingegeben werden.</p>"
+           "<p><a style='color:#8fd3ff' href='/history/maintenance'>Zur Wartung</a></p>"
+           "</body></html>");
+    server.send(400,"text/html; charset=utf-8",html);
+    return;
+  }
+
+  Serial.println(F("[HISTORY] Loeschen bestaetigt: LOESCHEN"));
+historyResetFile();server.sendHeader("Location","/history",true);server.send(303,"text/plain","");}
+
+bool parseImportDate(String v,uint32_t& dayKey){
+  v.trim();char sep=v.indexOf('.')>=0?'.':'-';int p1=v.indexOf(sep),p2=p1>=0?v.indexOf(sep,p1+1):-1;
+  if(p1<0||p2<0)return false;
+  int d=v.substring(0,p1).toInt(),m=v.substring(p1+1,p2).toInt(),y=v.substring(p2+1).toInt();
+  if(y<100)y+=2000;if(d<1||d>31||m<1||m>12||y<2000)return false;
+  struct tm t={};t.tm_year=y-1900;t.tm_mon=m-1;t.tm_mday=d;t.tm_hour=12;time_t ts=mktime(&t);
+  if(ts==(time_t)-1)return false;struct tm chk;localtime_r(&ts,&chk);
+  if(chk.tm_mday!=d||chk.tm_mon!=m-1||chk.tm_year!=y-1900)return false;
+  dayKey=(uint32_t)y*10000UL+(uint32_t)m*100UL+(uint32_t)d;return true;
+}
+
+HistoryImportParsed parseHistoryImportLine(String line, uint32_t today, uint32_t oldest) {
+  HistoryImportParsed p{};
+  p.valid=false;
+  p.autoDerived=false;
+  p.climateValid=false;
+  p.source=HISTORY_IMPORTED;
+  p.climateSamples=0;
+
+  line.trim();
+  if(!line.length()){p.reason=F("Leer");return p;}
+
+  String cols[13];
+  uint8_t n=0;
+  int pos=0;
+  while(n<13){
+    int q=line.indexOf(';',pos);
+    if(q<0){
+      cols[n++]=line.substring(pos);
+      break;
+    }
+    cols[n++]=line.substring(pos,q);
+    pos=q+1;
+  }
+
+  if(n<2){p.reason=F("Zu wenige Spalten");return p;}
+
+  uint32_t day=0;
+  if(!parseImportDate(cols[0],day)){p.reason=F("Datum ungueltig");return p;}
+  if(today && day>today){p.reason=F("Datum in Zukunft");return p;}
+  if(oldest && day<oldest){p.reason=F("Aelter als 10 Jahre");return p;}
+
+  cols[1].trim();
+  cols[1].replace(',', '.');
+  if(!cols[1].length()){p.reason=F("Liter fehlt");return p;}
+  float liters=cols[1].toFloat();
+  if(!isfinite(liters)||liters<0||liters>65535){p.reason=F("Liter ungueltig");return p;}
+
+  p.dayKey=day;
+  p.liters=(uint16_t)constrain((int)lroundf(liters),0,65535);
+
+  const bool hasConsumption=n>=4 && cols[3].length();
+  const bool hasRefill=n>=5 && cols[4].length();
+  p.autoDerived=!(hasConsumption || hasRefill);
+
+  if(hasConsumption){
+    cols[3].replace(',', '.');
+    float v=cols[3].toFloat();
+    if(isfinite(v)&&v>=0)p.consumption=(uint16_t)constrain((int)lroundf(v),0,65535);
+  }
+
+  if(hasRefill){
+    cols[4].replace(',', '.');
+    float v=cols[4].toFloat();
+    if(isfinite(v)&&v>=0)p.refill=(uint16_t)constrain((int)lroundf(v),0,65535);
+  }
+
+  if(n>=6){
+    cols[5].trim();
+    int q=cols[5].toInt();
+    if(q>=0&&q<=2)p.source=(uint8_t)q;
+  }
+
+  if(n>=12){
+    bool present=true;
+    for(uint8_t i=6;i<=11;i++){
+      cols[i].trim();
+      if(!cols[i].length()){present=false;break;}
+      cols[i].replace(',', '.');
+    }
+
+    if(present){
+      const float ta=cols[6].toFloat();
+      const float tn=cols[7].toFloat();
+      const float tx=cols[8].toFloat();
+      const float ha=cols[9].toFloat();
+      const float hn=cols[10].toFloat();
+      const float hx=cols[11].toFloat();
+
+      const bool plausible=
+        isfinite(ta)&&isfinite(tn)&&isfinite(tx)&&
+        isfinite(ha)&&isfinite(hn)&&isfinite(hx)&&
+        ta>=-40.0f&&ta<=85.0f&&tn>=-40.0f&&tn<=85.0f&&tx>=-40.0f&&tx<=85.0f&&
+        ha>=0.0f&&ha<=100.0f&&hn>=0.0f&&hn<=100.0f&&hx>=0.0f&&hx<=100.0f&&
+        tn<=ta&&ta<=tx&&hn<=ha&&ha<=hx;
+
+      if(plausible){
+        p.climateValid=true;
+        p.tempAvgC=ta;
+        p.tempMinC=tn;
+        p.tempMaxC=tx;
+        p.humidityAvgPct=ha;
+        p.humidityMinPct=hn;
+        p.humidityMaxPct=hx;
+        p.climateSamples=1;
+
+        if(n>=13){
+          cols[12].trim();
+          if(cols[12].length()){
+            long cs=cols[12].toInt();
+            if(cs>0 && cs<=65535)p.climateSamples=(uint16_t)cs;
+          }
+        }
+      }
+    }
+  }
+
+  p.valid=true;
+  if(p.climateValid){
+    p.reason=p.autoDerived?F("OK / automatisch + Klima"):F("OK / CSV + Klima");
+  }else{
+    p.reason=p.autoDerived?F("OK / automatisch"):F("OK / CSV");
+  }
+  return p;
+}
+
+void historyApplyImportedClimate(const HistoryImportParsed& p, DailyHistoryRecord& r){
+  historyClimateClear(r);
+  if(!p.climateValid)return;
+
+  r.tempAvgHalfC=historyEncodeTempHalfC(p.tempAvgC);
+  r.tempMinHalfC=historyEncodeTempHalfC(p.tempMinC);
+  r.tempMaxHalfC=historyEncodeTempHalfC(p.tempMaxC);
+  r.humidityAvgPct=historyEncodeHumidity(p.humidityAvgPct);
+  r.humidityMinPct=historyEncodeHumidity(p.humidityMinPct);
+  r.humidityMaxPct=historyEncodeHumidity(p.humidityMaxPct);
+  r.climateSamples=max((uint16_t)1,p.climateSamples);
+}
+
+void historyDeriveImportFlow(HistoryImportParsed& p, uint32_t prevDay, uint16_t prevLiters, bool prevValid) {
+  if(!p.valid || !p.autoDerived){
+    return;
+  }
+
+  p.consumption=0;
+  p.refill=0;
+
+  if(!prevValid || !historyDaysAreAdjacent(prevDay,p.dayKey)){
+    return;
+  }
+
+  const int32_t delta=(int32_t)p.liters-(int32_t)prevLiters;
+
+  if(delta >= (int32_t)HISTORY_REFILL_MIN_LITERS){
+    p.refill=(uint16_t)min((int32_t)65535,delta);
+    p.consumption=0;
+  }else if(delta < 0){
+    p.consumption=(uint16_t)min((int32_t)65535,-delta);
+  }
+}
+
+void handleHistoryImportPage(){
+  webStreamBegin(F("Historie Import"));
+  webStreamNav(1);
+  server.sendContent(F(
+    "<div class='card'><h1>CSV Import</h1>"
+    "<p>Kompatibel zu Fuellstandsmesser3.</p>"
+    "<p><b>Vollformat:</b> Datum;Fuellstand_L;Fuellstand_%;Verbrauch_L;Nachfuellung_L;Quelle</p>"
+    "<p><b>History V3:</b> zusätzlich Temp Mittel/Min/Max, RH Mittel/Min/Max und optional Klima_Samples</p>"
+    "<p><b>Einfach:</b> Datum;Liter</p>"
+    "<p class='muted'>Bei Datum;Liter werden Verbrauch und Nachfuellung automatisch aus lueckenlosen Folgetagen rekonstruiert. "
+    "Ein Anstieg ab 150 L gilt als Nachfuellung. Kleinere Anstiege gelten als Messschwankung.</p>"
+    "<form method='POST' action='/history/import/preview' enctype='multipart/form-data'>"
+    "<input type='file' name='data' accept='.csv,text/csv' required>"
+    "<button type='submit'>Datei pruefen</button></form>"
+    "<p><a class='btn' href='/history'>Zurueck</a></p></div>"
+  ));
+  webStreamEnd();
+}
+
+void handleHistoryImportUpload(){
+  HTTPUpload& up=server.upload();
+  static File f;
+  if(up.status==UPLOAD_FILE_START){
+    LittleFS.remove(HISTORY_IMPORT_PREVIEW_FILE);
+    f=LittleFS.open(HISTORY_IMPORT_PREVIEW_FILE,"w");
+  }else if(up.status==UPLOAD_FILE_WRITE){
+    if(f)f.write(up.buf,up.currentSize);
+  }else if(up.status==UPLOAD_FILE_END||up.status==UPLOAD_FILE_ABORTED){
+    if(f)f.close();
+  }
+}
+
+void handleHistoryImportPreview(){
+  File f=LittleFS.open(HISTORY_IMPORT_PREVIEW_FILE,"r");
+  if(!f){server.send(400,"text/plain","Importdatei fehlt");return;}
+
+  uint32_t today=0; historyDateNow(today);
+  time_t now=time(nullptr);
+  uint32_t oldest=now>1700000000?historyDayKeyFromTime(now-(time_t)3650*86400):0;
+
+  uint32_t ok=0,bad=0,total=0,shown=0,autoRows=0,climateRows=0;
+  uint32_t prevDay=0;
+  uint16_t prevLiters=0;
+  bool prevValid=false;
+
+  while(f.available()){
+    String line=f.readStringUntil('\n');line.trim();
+    if(!line.length())continue;
+    if(line.startsWith("Datum")||line.startsWith("datum"))continue;
+
+    total++;
+    HistoryImportParsed p=parseHistoryImportLine(line,today,oldest);
+    if(p.valid){
+      historyDeriveImportFlow(p,prevDay,prevLiters,prevValid);
+      ok++;
+      if(p.autoDerived)autoRows++;
+      if(p.climateValid)climateRows++;
+      prevDay=p.dayKey;
+      prevLiters=p.liters;
+      prevValid=true;
+    }else{
+      bad++;
+    }
+
+    if((total&0x3F)==0)yield();
+  }
+
+  f.seek(0,SeekSet);
+  prevDay=0;prevLiters=0;prevValid=false;
+
+  webStreamBegin(F("Import Vorschau"));
+  webStreamNav(1);
+
+  server.sendContent(F("<div class='card'><h1>CSV Import – Vorschau</h1><div class='grid'>"));
+
+  String tiny;
+  tiny.reserve(220);
+  tiny=F("<div class='metric-card'><h3>Zeilen</h3><div>");
+  tiny+=String(total);tiny+=F("</div></div><div class='metric-card'><h3>Gueltig</h3><div class='ok'>");
+  tiny+=String(ok);tiny+=F("</div></div><div class='metric-card'><h3>Verworfen</h3><div class='bad'>");
+  tiny+=String(bad);tiny+=F("</div></div><div class='metric-card'><h3>Automatisch berechnet</h3><div>");
+  tiny+=String(autoRows);tiny+=F("</div></div><div class='metric-card'><h3>Mit Klima</h3><div>");
+  tiny+=String(climateRows);tiny+=F("</div></div></div>");
+  server.sendContent(tiny);
+
+  server.sendContent(F(
+    "<p class='muted'>Bei einfachem Datum;Liter-Import werden Verbrauch und Nachfuellung nur zwischen direkt aufeinanderfolgenden Tagen berechnet. "
+    "Bei Datenluecken startet die Berechnung neu. Vollstaendige Fuellstandsmesser3-Werte werden unveraendert uebernommen.</p>"
+    "<div style='overflow-x:auto'><table><tr><th>#</th><th>Datum</th><th>Liter</th><th>Verbrauch</th><th>Nachfuellung</th><th>Quelle</th><th>Klima</th><th>Berechnung</th><th>Status</th></tr>"
+  ));
+
+  uint32_t rowNo=0;
+  while(f.available() && shown<100){
+    String line=f.readStringUntil('\n');line.trim();
+    if(!line.length())continue;
+    if(line.startsWith("Datum")||line.startsWith("datum"))continue;
+
+    rowNo++;
+    HistoryImportParsed p=parseHistoryImportLine(line,today,oldest);
+
+    if(p.valid){
+      historyDeriveImportFlow(p,prevDay,prevLiters,prevValid);
+      prevDay=p.dayKey;
+      prevLiters=p.liters;
+      prevValid=true;
+    }
+
+    String row;
+    row.reserve(280);
+    row+=F("<tr><td>");row+=String(rowNo);row+=F("</td><td>");
+    row+=p.valid?historyDateString(p.dayKey):F("--");
+    row+=F("</td><td>");row+=p.valid?String(p.liters):F("--");
+    row+=F("</td><td>");row+=p.valid?String(p.consumption):F("--");
+    row+=F("</td><td>");row+=p.valid?String(p.refill):F("--");
+    row+=F("</td><td>");
+    if(p.valid)row+=(p.source==HISTORY_MEASURED?F("Gemessen"):(p.source==HISTORY_TEST?F("Test"):F("Import")));
+    else row+=F("--");
+    row+=F("</td><td>");
+    if(p.valid&&p.climateValid){
+      row+=String(p.tempAvgC,1);row+=F(" C / ");row+=String(p.humidityAvgPct,0);row+=F(" %");
