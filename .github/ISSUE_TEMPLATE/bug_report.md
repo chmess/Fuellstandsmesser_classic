@@ -1,33 +1,31 @@
 ---
 name: Bug report
-about: Fehler in Firmware oder Weboberfläche melden
+about: Fehler melden / Report a firmware or web UI bug
 title: "[BUG] "
 labels: bug
 assignees: ""
 ---
 
 ## Version
-
 - Firmware:
 - ESP8266 Core:
 - Board:
+- Sprache / Language: DE / EN
 
-## Beschreibung
+## Beschreibung / Description
 
-## Schritte zum Reproduzieren
-
+## Schritte zum Reproduzieren / Steps to reproduce
 1.
 2.
 3.
 
-## Erwartetes Verhalten
+## Erwartetes Verhalten / Expected behavior
 
-## Tatsächliches Verhalten
+## Tatsächliches Verhalten / Actual behavior
 
-## Serielles Log
-
+## Serielles Log / Serial log
 ```text
-Bitte Zugangsdaten/IPs bei Bedarf anonymisieren.
+Bitte Zugangsdaten/IPs anonymisieren. / Please redact credentials and private IPs.
 ```
 
-## Zusätzliche Informationen
+## Zusätzliche Informationen / Additional information
