@@ -1,31 +1,29 @@
-# Security
+# Security / Sicherheit
 
-## Unterstützter Stand
+## Deutsch
 
-Aktuell gepflegt:
+Die Firmware ist für ein **vertrauenswürdiges lokales Netzwerk** vorgesehen. Die Weboberfläche besitzt derzeit keine allgemeine Benutzer-Authentifizierung.
 
-- V0.12.x
+- Gerät nicht direkt ins Internet exponieren.
+- Router-Portfreigaben vermeiden.
+- Zugriff über LAN/VPN bevorzugen.
+- Web OTA nur aus einem vertrauenswürdigen Netz verwenden.
+- MQTT-Broker nach Möglichkeit mit Authentifizierung betreiben.
+- Keine echten WLAN-/MQTT-Zugangsdaten in Issues, Logs oder Screenshots veröffentlichen.
 
-## Netzwerkmodell
+Sensible Sicherheitsprobleme nicht zusammen mit Zugangsdaten oder privaten Netzwerkinformationen öffentlich melden.
 
-Die Firmware ist für den Betrieb in einem **vertrauenswürdigen lokalen Netzwerk** vorgesehen.
+## English
 
-Die Weboberfläche besitzt derzeit keine allgemeine Benutzer-Authentifizierung. Daher:
+The firmware is intended for a **trusted local network**. The web interface currently has no general user authentication.
 
-- Gerät nicht direkt ins Internet exponieren
-- Router-Portfreigaben vermeiden
-- Zugriff über LAN/VPN bevorzugen
-- Web OTA nur aus einem vertrauenswürdigen Netz verwenden
-- MQTT-Broker nach Möglichkeit mit Authentifizierung betreiben
+- Do not expose the device directly to the Internet.
+- Avoid router port forwarding.
+- Prefer LAN/VPN access.
+- Use Web OTA only from a trusted network.
+- Use MQTT broker authentication where practical.
+- Never publish real Wi-Fi/MQTT credentials in issues, logs or screenshots.
 
-## Zugangsdaten
+Do not publicly report sensitive security issues together with credentials or private network information.
 
-WLAN- und MQTT-Zugangsdaten werden in der Gerätekonfiguration gespeichert. Keine echten Zugangsdaten in GitHub-Issues, Logs oder Screenshots veröffentlichen.
-
-## Sicherheitsprobleme melden
-
-Bitte sensible Sicherheitsprobleme nicht als öffentliches Issue mit Zugangsdaten oder privaten Netzwerkinformationen veröffentlichen.
-
-## Hardware- und Betriebssicherheit
-
-Siehe [Sicherheit & Haftung](docs/SAFETY.md).
+See [docs/SAFETY.md](docs/SAFETY.md).
