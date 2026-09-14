@@ -1,16 +1,10 @@
 # Installation & Build
 
 ## Deutsch
+Voraussetzungen: Arduino IDE 2.x, ESP8266 Arduino Core 3.1.2, ESP8266 D1 mini mit 4 MB Flash.
 
-### Voraussetzungen
-- Arduino IDE 2.x
-- ESP8266 Arduino Core 3.1.2
-- ESP8266 D1 mini, 4 MB Flash
+Libraries: Adafruit GFX, Adafruit PCD8544, Adafruit VL53L0X, Adafruit VL53L1X, PubSubClient.
 
-### Libraries
-Adafruit GFX, Adafruit PCD8544, Adafruit VL53L0X, Adafruit VL53L1X, PubSubClient.
-
-### Build
 1. Board **LOLIN(WEMOS) D1 R2 & mini** wählen.
 2. Sprache in `Language.h` wählen.
 3. `firmware/Fuellstandsmesser_classic/Fuellstandsmesser_classic.ino` öffnen.
@@ -18,21 +12,13 @@ Adafruit GFX, Adafruit PCD8544, Adafruit VL53L0X, Adafruit VL53L1X, PubSubClient
 5. Kompilieren und flashen.
 6. Serial Monitor: **115200 Baud**.
 
-Fallback-AP bei fehlender WLAN-Verbindung: `Fuellstandsmesser_classic-<chipid>`.
-
-Web OTA: `http://<geraete-ip>/update`. ArduinoOTA ist aus RAM-Gründen entfernt.
+Fallback-AP: `Fuellstandsmesser_classic-<chipid>`. Web OTA: `http://<geraete-ip>/update`. ArduinoOTA ist aus RAM-Gründen entfernt.
 
 ## English
+Requirements: Arduino IDE 2.x, ESP8266 Arduino Core 3.1.2, ESP8266 D1 mini with 4 MB flash.
 
-### Requirements
-- Arduino IDE 2.x
-- ESP8266 Arduino Core 3.1.2
-- ESP8266 D1 mini, 4 MB flash
+Libraries: Adafruit GFX, Adafruit PCD8544, Adafruit VL53L0X, Adafruit VL53L1X, PubSubClient.
 
-### Libraries
-Adafruit GFX, Adafruit PCD8544, Adafruit VL53L0X, Adafruit VL53L1X, PubSubClient.
-
-### Build
 1. Select **LOLIN(WEMOS) D1 R2 & mini**.
 2. Select the language in `Language.h`.
 3. Open `firmware/Fuellstandsmesser_classic/Fuellstandsmesser_classic.ino`.
@@ -40,6 +26,4 @@ Adafruit GFX, Adafruit PCD8544, Adafruit VL53L0X, Adafruit VL53L1X, PubSubClient
 5. Compile and flash.
 6. Serial Monitor: **115200 baud**.
 
-Fallback AP when Wi-Fi is unavailable: `Fuellstandsmesser_classic-<chipid>`.
-
-Web OTA: `http://<device-ip>/update`. ArduinoOTA is removed to save RAM.
+Fallback AP: `Fuellstandsmesser_classic-<chipid>`. Web OTA: `http://<device-ip>/update`. ArduinoOTA is removed to save RAM.
