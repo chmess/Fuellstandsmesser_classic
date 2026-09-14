@@ -1,7 +1,12 @@
-Automatischer GitHub-Vorcheck
-============================
+Automatischer GitHub-Vorcheck / Automated GitHub pre-check
+==========================================================
 
-Gefundene auffällige harte Zugangsdaten-Muster: 0
-- keine offensichtlichen festen Passwörter/SSIDs gefunden
+Deutsch:
+- keine offensichtlichen fest eingebauten Passwörter/SSIDs im geprüften Stand vorgesehen
+- generischer MQTT-Defaultwert 192.168.0.10 kann im Quellcode vorhanden sein
+- vor öffentlichem Release trotzdem manuell auf Zugangsdaten, private IPs und Screenshots prüfen
 
-Hinweis: Ein generischer MQTT-Defaultwert 192.168.0.10 ist im Quellcode vorhanden.
+English:
+- no obvious hard-coded passwords/SSIDs are intended in the reviewed state
+- a generic MQTT default value 192.168.0.10 may be present in source
+- before a public release, still manually review credentials, private IPs and screenshots
