@@ -3107,3 +3107,403 @@ void handleHistoryMaintenanceRepair(){
   const uint32_t elapsed=millis()-startMs;
   const uint32_t heapAfter=ESP.getFreeHeap();
 
+  Serial.print(F("[HISTORY MAINT] Ergebnis="));
+  Serial.print(ok?F("OK"):F("FEHLER"));
+  Serial.print(F(" time="));
+  Serial.print(elapsed);
+  Serial.print(F(" ms heap="));
+  Serial.print(heapBefore);
+  Serial.print(F("->"));
+  Serial.println(heapAfter);
+
+  webStreamBegin(F("History Wartung"));
+  webStreamNav(1);
+
+  server.sendContent(F(
+    "<div class='card'><h1>History-Normalisierung abgeschlossen</h1>"
+    "<div class='grid'>"
+  ));
+
+  webMetricCard(F("Ergebnis"),ok?String(F("OK")):String(F("FEHLER")));
+  webMetricCard(F("Records"),String(historyHeader.count));
+  webMetricCard(F("Duplikate"),String(historyRepairDuplicates));
+  webMetricCard(F("Ungültig / CRC"),String(historyRepairInvalid));
+  webMetricCard(F("Reihenfolgefehler"),String(historyRepairOutOfOrder));
+  webMetricCard(F("Entfernt"),String(historyRepairRemoved));
+  webMetricCard(F("Repariert"),historyRepairPerformed?String(F("JA")):String(F("NEIN")));
+  webMetricCard(F("Dauer"),String(elapsed)+F(" ms"));
+
+  server.sendContent(F(
+    "</div><div class='links' style='margin-top:16px'>"
+    "<a class='btn' href='/history/maintenance'>Wartung</a>"
+    "<a class='btn' href='/history'>Historie</a>"
+    "</div></div>"
+  ));
+
+  webStreamEnd();
+}
+
+void handleHistoryDeleteTestData(){
+  const uint32_t before=historyHeader.count;
+  uint32_t removed=0;
+
+  Serial.println(F("[HISTORY MAINT] Testdaten-Loeschung gestartet"));
+
+  const bool ok=historyDeleteSource(HISTORY_TEST,removed);
+
+  Serial.print(F("[HISTORY MAINT] Testdaten-Loeschung Ergebnis="));
+  Serial.print(ok?F("OK"):F("FEHLER"));
+  Serial.print(F(" entfernt="));
+  Serial.print(removed);
+  Serial.print(F(" count="));
+  Serial.print(before);
+  Serial.print(F("->"));
+  Serial.println(historyHeader.count);
+
+  webStreamBegin(F("History Wartung"));
+  webStreamNav(1);
+
+  server.sendContent(F(
+    "<div class='card'><h1>Testdaten löschen</h1><div class='grid'>"
+  ));
+
+  webMetricCard(F("Ergebnis"),ok?String(F("OK")):String(F("FEHLER")));
+  webMetricCard(F("Entfernt"),String(removed));
+  webMetricCard(F("Vorher"),String(before)+F(" Records"));
+  webMetricCard(F("Nachher"),String(historyHeader.count)+F(" Records"));
+
+  server.sendContent(F(
+    "</div><div class='links' style='margin-top:16px'>"
+    "<a class='btn' href='/history/maintenance'>Wartung</a>"
+    "<a class='btn' href='/history'>Historie</a>"
+    "</div></div>"
+  ));
+
+  webStreamEnd();
+}
+
+void handleHistoryDeleteImportedData(){
+  const uint32_t before=historyHeader.count;
+  uint32_t removed=0;
+
+  Serial.println(F("[HISTORY MAINT] Importdaten-Loeschung gestartet"));
+
+  const bool ok=historyDeleteSource(HISTORY_IMPORTED,removed);
+
+  Serial.print(F("[HISTORY MAINT] Importdaten-Loeschung Ergebnis="));
+  Serial.print(ok?F("OK"):F("FEHLER"));
+  Serial.print(F(" entfernt="));
+  Serial.print(removed);
+  Serial.print(F(" count="));
+  Serial.print(before);
+  Serial.print(F("->"));
+  Serial.println(historyHeader.count);
+
+  webStreamBegin(F("History Wartung"));
+  webStreamNav(1);
+
+  server.sendContent(F(
+    "<div class='card'><h1>Importdaten löschen</h1><div class='grid'>"
+  ));
+
+  webMetricCard(F("Ergebnis"),ok?String(F("OK")):String(F("FEHLER")));
+  webMetricCard(F("Entfernt"),String(removed));
+  webMetricCard(F("Vorher"),String(before)+F(" Records"));
+  webMetricCard(F("Nachher"),String(historyHeader.count)+F(" Records"));
+
+  server.sendContent(F(
+    "</div><div class='links' style='margin-top:16px'>"
+    "<a class='btn' href='/history/maintenance'>Wartung</a>"
+    "<a class='btn' href='/history'>Historie</a>"
+    "</div></div>"
+  ));
+
+  webStreamEnd();
+}
+
+
+void handleHistoryPage(){
+  const uint32_t historyPageHeapBefore=ESP.getFreeHeap();
+  Serial.print(F("[WEB HISTORY PAGE] start heap="));
+  Serial.print(historyPageHeapBefore);
+  Serial.print(F(" maxBlock="));
+  Serial.println(ESP.getMaxFreeBlockSize());
+
+  webStreamBegin(F("Historie"));
+  webStreamNav(1);
+
+  server.sendContent(F(
+    "<style>.periods{display:flex;gap:6px;flex-wrap:wrap}.periodBtn{background:#292929;border:1px solid #555;border-radius:999px;padding:7px 11px;color:#eee}.periodBtn.active,.monthYearsBtn.active{background:#1769aa}.monthYearsBtn{background:#292929;border:1px solid #555;border-radius:999px;padding:7px 11px;color:#eee}.chartToggles{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:.82rem;color:#bbb}.chartToggles label{display:flex;align-items:center;gap:4px}.chartToggles input{width:auto;margin:0}"
+    ".chartWrap{height:300px;position:relative}.chart{width:100%;height:100%}.chartTip{position:absolute;display:none;pointer-events:none;min-width:170px;background:#101418;border:1px solid #4d5965;border-radius:9px;padding:8px;box-shadow:0 4px 14px #000;font-size:12px;z-index:5}.legend{display:flex;gap:14px;flex-wrap:wrap;color:#aaa;font-size:.82rem;margin-top:8px}.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px}@media(max-width:700px){.chartWrap{height:240px}}.chartToggles{margin-left:auto;padding:2px 0}.chartToggles label{padding:5px 8px;border:1px solid #3b3b3b;border-radius:999px;background:#202020;cursor:pointer}.chartToggles label.off{opacity:.38;cursor:not-allowed}.chartToggles input:disabled{cursor:not-allowed}.periods{display:flex;gap:6px;flex-wrap:wrap}.periodBtn,.monthYearsBtn{min-height:32px}.muted.compact{margin:5px 0 8px}</style>"
+  ));
+  server.sendContent(F(
+    "<div class='card'><div class='topbar'><h1>Historie</h1><div class='periods'>"
+    "<button class='periodBtn' data-d='183'>½ Jahr</button><button class='periodBtn active' data-d='365'>1 Jahr</button>"
+    "<button class='periodBtn' data-d='1825'>5 Jahre</button><button class='periodBtn' data-d='3650'>10 Jahre</button></div>"
+    "<div class='chartToggles'><label><input id='histShowTemp' type='checkbox' checked>Temperatur</label><label><input id='histShowHum' type='checkbox' checked>Feuchte</label></div></div>"
+    "<p id='historyLoadStatus' class='muted compact'>Historie wird geladen …</p><div class='chartWrap'><canvas id='hc' class='chart'></canvas><div id='histTip' class='chartTip'></div></div>"
+    "<div class='legend'><span><i style='background:#4da6ff'></i>Füllstand</span><span><i style='background:#ffb52e'></i>Verbrauch</span><span><i style='background:#42d65b'></i>Nachfüllung</span><span><i style='background:#ff8a65'></i>Temperatur</span><span><i style='background:#26c6da'></i>Luftfeuchte</span><span><i style='background:#ffd166'></i>Import</span><span><i style='background:#ff6b6b'></i>Testdaten</span></div></div>"
+    "<div class='card'><div class='topbar'><h2>Monatsvergleich</h2><div class='periods'>"
+    "<button class='monthYearsBtn' data-y='3'>3 Jahre</button><button class='monthYearsBtn active' data-y='5'>5 Jahre</button><button class='monthYearsBtn' data-y='10'>10 Jahre</button></div></div>"
+    "<p id='monthlyStatus' class='muted compact'>Monatsvergleich wird geladen …</p>"
+    "<div class='chartWrap'><canvas id='mc' class='chart'></canvas><div id='monthTip' class='chartTip'></div></div><div id='monthlyLegend' class='legend'></div>"
+    "<div style='overflow-x:auto'><table id='monthlyTable'></table></div></div>"
+    "<div class='card'><h2>Statistik</h2><div class='grid'><div class='metric'>Zeitraum<b id='sd'>--</b></div><div class='metric'>Verbrauch<b id='sc'>-- L</b></div>"
+    "<div class='metric'>Nachfüllungen<b id='sr'>-- L</b></div><div class='metric'>Füllstand<b id='sl'>--</b></div>"
+    "<div class='metric'>Ältester Tag<b id='so'>--</b></div><div class='metric'>Neuester Tag<b id='sn'>--</b></div>"
+  ));
+  server.sendContent(F(
+    "<div class='metric'>Datenbestand<b id='sy'>--</b></div></div></div>"
+    "<div class='card'><h2>Letzte Nachfüllungen</h2><div id='recentRefills' class='muted'>Wird geladen …</div></div>"
+  ));
+  server.sendContent(F(
+    "<div class='card'><h2>Daten</h2><div class='links'><a class='btn' href='/history/import'>CSV importieren</a><a class='btn' href='/history.csv?days=3650'>CSV exportieren</a><a class='btn' href='/history/maintenance'>Wartung</a></div></div>"
+    "<div class='card'><h2>Testdaten</h2><div class='links'><form method='POST' action='/generate-test-history'><button type='submit'>1 Jahr Testdaten</button></form>"
+    "<form method='POST' action='/generate-test-history-10y'><button type='submit'>10 Jahre Testdaten</button></form>"
+    "<form method='POST' action='/clear-history' "
+    "onsubmit=\"return confirm('ACHTUNG: Wirklich die komplette Historie unwiderruflich löschen?');\">"
+    "<p style='color:#ff6b6b'><b>ACHTUNG:</b> Löscht die komplette History dauerhaft.</p>"
+    "<label>Zur Bestätigung exakt <b>LOESCHEN</b> eingeben</label>"
+  ));
+  server.sendContent(F(
+    "<input name='confirmText' autocomplete='off' placeholder='LOESCHEN' required>"
+    "<button class='danger' type='submit'>Historie löschen</button></form></div></div>"
+  ));
+
+  server.sendContent(R"JS(
+<script>
+(function(){
+const $=i=>document.getElementById(i),f=v=>Number.isFinite(Number(v))?Number(v).toFixed(1):'--';
+let d=365,items=[],climateItems=[],histGeom=null,showTemp=true,showHum=true;
+function updateHistoryClimateToggles(){
+  const has=climateItems.length>0;
+  const t=$('histShowTemp'),h=$('histShowHum');
+  if(t){t.disabled=!has;t.closest('label')?.classList.toggle('off',!has)}
+  if(h){h.disabled=!has;h.closest('label')?.classList.toggle('off',!has)}
+}
+
+const mn=['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+let monthYears=5,monthly=null,monthBars=[];
+
+function dayKeyText(v){
+  const n=Number(v)||0;
+  if(n<10000101)return '--';
+  const y=Math.floor(n/10000),m=Math.floor(n/100)%100,d=n%100;
+  return String(d).padStart(2,'0')+'.'+String(m).padStart(2,'0')+'.'+y;
+}
+function dayKeyDate(v){
+  const n=Number(v)||0;
+  if(n<10000101)return null;
+  const y=Math.floor(n/10000),m=Math.floor(n/100)%100,d=n%100;
+  return new Date(y,m-1,d,12,0,0);
+}
+function dataSpanText(oldest,newest,count){
+  const a=dayKeyDate(oldest),b=dayKeyDate(newest);
+)JS");
+  server.sendContent(R"JS(
+  if(!a||!b||!count)return '--';
+  const days=Math.max(1,Math.round((b-a)/86400000)+1);
+  const years=days/365.2425;
+  if(years>=1)return years.toFixed(1).replace('.',',')+' Jahre · '+count+' Tage';
+  if(days>=30)return (days/30.44).toFixed(1).replace('.',',')+' Monate · '+count+' Tage';
+  return days+' Tage';
+}
+
+function draw(){
+  const c=$('hc'),r=c.getBoundingClientRect(),w=Math.max(300,Math.floor(r.width)),h=Math.floor(r.height),z=devicePixelRatio||1;
+  c.width=w*z;c.height=h*z;const x=c.getContext('2d');x.setTransform(z,0,0,z,0,0);x.clearRect(0,0,w,h);
+  if(!items.length){x.fillStyle='#777';x.fillText('Keine Daten',20,30);return}
+)JS");
+  server.sendContent(R"JS(
+  const pl=38,pr=showTemp&&climateItems.length?42:8,pt=10,pb=22,iw=w-pl-pr,ih=h-pt-pb,t0=items[0].time,t1=Math.max(t0+86400000,items[items.length-1].time),px=t=>pl+(t-t0)/(t1-t0)*iw,py=v=>pt+ih-Math.max(0,Math.min(100,v))/100*ih;
+  let tMin=0,tMax=40;
+  if(showTemp&&climateItems.length){let mn=999,mx=-999;climateItems.forEach(a=>[a.tMin,a.tAvg,a.tMax].forEach(v=>{v=Number(v);if(Number.isFinite(v)){mn=Math.min(mn,v);mx=Math.max(mx,v)}}));if(mn!==999){if(mx-mn<4){mn-=2;mx+=2}tMin=Math.floor(mn-1);tMax=Math.ceil(mx+1)}}
+  const pyT=v=>pt+ih-(v-tMin)/(tMax-tMin)*ih;
+  x.strokeStyle='#333';[0,25,50,75,100].forEach(v=>{let y=py(v);x.beginPath();x.moveTo(pl,y);x.lineTo(w-pr,y);x.stroke();x.fillStyle='#888';x.font='10px Arial';x.fillText(v+'%',2,y+3)});
+)JS");
+  server.sendContent(R"JS(
+  if(showTemp&&climateItems.length)for(let i=0;i<=4;i++){const y=pt+ih-(i/4)*ih,s=(tMin+(tMax-tMin)*(i/4)).toFixed(0)+'°';x.fillStyle='#ff9d83';x.fillText(s,w-x.measureText(s).width-2,y+3)}
+  const maxC=Math.max(1,...items.map(a=>Number(a.consumedLiters)||0));items.forEach(a=>{const q=px(a.time),bh=((Number(a.consumedLiters)||0)/maxC)*(ih*.30);if(bh>0){x.fillStyle='#ffb52e';x.fillRect(q-1,pt+ih-bh,2,bh)}});
+  x.beginPath();items.forEach((a,i)=>{let q=px(a.time),y=py(a.percent);i?x.lineTo(q,y):x.moveTo(q,y)});x.strokeStyle='#4da6ff';x.lineWidth=2;x.stroke();
+)JS");
+  server.sendContent(R"JS(
+  if(showHum&&climateItems.length){let begun=false;x.beginPath();climateItems.forEach(a=>{const v=Number(a.hAvg);if(!Number.isFinite(v))return;const q=px(a.time),y=py(v);begun?x.lineTo(q,y):x.moveTo(q,y);begun=true});if(begun){x.strokeStyle='#26c6da';x.lineWidth=1.8;x.stroke()}}
+  if(showTemp&&climateItems.length){let begun=false;x.beginPath();climateItems.forEach(a=>{const v=Number(a.tAvg);if(!Number.isFinite(v))return;const q=px(a.time),y=pyT(v);begun?x.lineTo(q,y):x.moveTo(q,y);begun=true});if(begun){x.strokeStyle='#ff8a65';x.lineWidth=1.8;x.stroke()}}
+)JS");
+  server.sendContent(R"JS(
+  items.forEach(a=>{const q=px(a.time),y=py(a.percent),src=Number(a.source)||0;if(src===1){x.strokeStyle='#ffd166';x.lineWidth=1.5;x.beginPath();x.arc(q,y,4,0,Math.PI*2);x.stroke()}else if(src===2){x.fillStyle='#ff6b6b';x.beginPath();x.moveTo(q,y-4);x.lineTo(q+4,y+4);x.lineTo(q-4,y+4);x.closePath();x.fill()}if(Number(a.refillLiters)>0){x.fillStyle='#42d65b';x.beginPath();x.arc(q,pt+ih-5,4,0,Math.PI*2);x.fill()}});
+  histGeom={px:items.map(a=>px(a.time))}
+}
+
+
+const histC=$('hc'),histTip=$('histTip');
+
+function nearestClimate(time){
+  let best=null,bd=43200001;
+  climateItems.forEach(v=>{
+    const dd=Math.abs(Number(v.time)-Number(time));
+    if(dd<bd){bd=dd;best=v}
+  });
+  return (best&&bd<=43200000)?best:null;
+}
+
+function histShowTip(e){
+  if(!histGeom||!items.length)return;
+)JS");
+  server.sendContent(R"JS(
+  const r=histC.getBoundingClientRect(),
+        mx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+
+  let bi=-1,bd=99999;
+  histGeom.px.forEach((q,i)=>{
+    const dd=Math.abs(q-mx);
+    if(dd<bd){bd=dd;bi=i}
+  });
+
+  if(bi<0||bd>28){
+    histTip.style.display='none';
+    return;
+  }
+
+  const a=items[bi],
+        sn=Number(a.source)===1?'Import':(Number(a.source)===2?'Test':'Gemessen'),
+        ci=nearestClimate(a.time);
+
+  let extra='';
+  if(ci){
+    if(showTemp&&Number.isFinite(Number(ci.tAvg))){
+      extra+='<br><span style="color:#ff8a65">Temperatur: '+f(ci.tAvg)+' °C</span>';
+    }
+    if(showHum&&Number.isFinite(Number(ci.hAvg))){
+      extra+='<br><span style="color:#26c6da">Feuchte: '+f(ci.hAvg)+' %</span>';
+    }
+  }
+
+  histTip.innerHTML=
+)JS");
+  server.sendContent(R"JS(
+    '<b>'+new Date(a.time).toLocaleDateString('de-DE')+'</b>'+
+    '<br>Füllstand: '+f(a.percent)+' %'+
+    '<br>Menge: '+f(a.liters)+' L'+
+    '<br>Verbrauch: '+f(a.consumedLiters)+' L'+
+    '<br>Quelle: '+sn+
+    (Number(a.refillLiters)>0
+      ?'<br><span style="color:#65e572">Nachfüllung: +'+f(a.refillLiters)+' L</span>'
+      :'')+
+    extra;
+
+  histTip.style.display='block';
+  histTip.style.left=Math.max(5,Math.min(histC.clientWidth-195,mx+10))+'px';
+  histTip.style.top='8px';
+}
+
+histC.onmousemove=histShowTip;
+histC.ontouchmove=histShowTip;
+histC.onmouseleave=()=>histTip.style.display='none';
+histC.ontouchend=()=>histTip.style.display='none';
+
+async function loadClimate(n){
+  climateItems=[];
+  try{
+    const r=await fetch('/api/history/climate?days='+n+'&x='+Date.now(),{
+      cache:'no-store'
+    });
+)JS");
+  server.sendContent(R"JS(
+    const raw=await r.text();
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const j=JSON.parse(raw);
+    climateItems=j.items||[];
+  }catch(e){
+    climateItems=[];
+  }
+  draw();
+}
+
+async function load(n){
+  d=n;
+
+  document.querySelectorAll('.periodBtn').forEach(b=>{
+    b.classList.toggle('active',Number(b.dataset.d)===d);
+  });
+
+  const st=$('historyLoadStatus');
+  st.textContent='Historie wird geladen …';
+  st.style.color='#888';
+
+  try{
+    const r=await fetch('/api/history?days='+d+'&x='+Date.now(),{
+      cache:'no-store'
+    });
+    const raw=await r.text();
+
+    if(!r.ok)throw new Error('HTTP '+r.status);
+
+    const j=JSON.parse(raw);
+    if(j.ok===false)throw new Error(j.error||'API');
+
+    items=j.items||[];
+    const s=j.stats||{};
+
+    $('sd').textContent=(s.days||0)+' Tage';
+)JS");
+  server.sendContent(R"JS(
+    $('sc').textContent=f(s.consumptionLiters)+' L';
+    $('sr').textContent=f(s.refillLiters)+' L';
+    $('sl').textContent=
+      (s.minPercent==null||s.maxPercent==null)
+        ?'--'
+        :f(s.minPercent)+'–'+f(s.maxPercent)+' %';
+
+    $('so').textContent=dayKeyText(s.oldestDay);
+    $('sn').textContent=dayKeyText(s.newestDay);
+    $('sy').textContent=dataSpanText(
+      s.oldestDay,
+      s.newestDay,
+      s.days||0
+    );
+
+    st.textContent=
+      'Geladen: '+items.length+
+      ' Grafikpunkte aus '+(s.days||0)+' vorhandenen Tagen';
+    st.style.color='#65e572';
+
+    draw();
+    await loadClimate(d);
+
+    if(climateItems.length){st.textContent+=' · Klima '+climateItems.length+' Tage'}else{st.textContent+=' · keine Klimadaten'}
+  }catch(e){
+    items=[];
+    climateItems=[];
+
+    $('sd').textContent='--';
+)JS");
+  server.sendContent(R"JS(
+    $('sc').textContent='-- L';
+    $('sr').textContent='-- L';
+    $('sl').textContent='--';
+    $('so').textContent='--';
+    $('sn').textContent='--';
+    $('sy').textContent='--';
+
+    st.textContent='Fehler: '+e.message;
+    st.style.color='#ff6565';
+    draw();
+  }
+}
+
+function drawMonthly(){
+  const c=$('mc');if(!c||!monthly)return;
+  const r=c.getBoundingClientRect(),w=Math.max(320,Math.floor(r.width)),h=Math.floor(r.height),z=devicePixelRatio||1;
+  c.width=w*z;c.height=h*z;
+  const x=c.getContext('2d');x.setTransform(z,0,0,z,0,0);x.clearRect(0,0,w,h);
+  const yrs=monthly.years||[],ms=monthly.months||[];let mx=1;
+  ms.forEach(a=>(a||[]).forEach(v=>{if(v!=null&&Number(v)>mx)mx=Number(v)}));
+  const pl=45,pr=10,pt=15,pb=35,iw=w-pl-pr,ih=h-pt-pb;
+  x.strokeStyle='#333';
+)JS");
+  server.sendContent(R"JS(
+  for(let g=0;g<=4;g++){let yy=pt+ih-g*ih/4;x.beginPath();x.moveTo(pl,yy);x.lineTo(w-pr,yy);x.stroke();x.fillStyle='#888';x.font='10px Arial';x.fillText(Math.round(mx*g/4)+'L',2,yy+3)}
+  const group=iw/12,bw=Math.max(2,Math.min(12,(group-4)/Math.max(1,yrs.length)));monthBars=[];
+  ms.forEach((a,m)=>{
+    (a||[]).forEach((v,yi)=>{
