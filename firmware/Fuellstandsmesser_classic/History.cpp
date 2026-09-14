@@ -2708,3 +2708,402 @@ bool historyDeleteSource(uint8_t source,uint32_t& removed){
 
     if(r.source==source){
       removed++;
+      continue;
+    }
+
+    const uint32_t offset=sizeof(HistoryHeader)+kept*sizeof(DailyHistoryRecord);
+    if(!tmp.seek(offset,SeekSet)){
+      src.close();tmp.close();
+      LittleFS.remove(HISTORY_FILTER_TMP_FILE);
+      return false;
+    }
+
+    if(tmp.write(reinterpret_cast<const uint8_t*>(&r),sizeof(r))!=sizeof(r)){
+      src.close();tmp.close();
+      LittleFS.remove(HISTORY_FILTER_TMP_FILE);
+      return false;
+    }
+
+    kept++;
+    if((li&0x7F)==0)yield();
+  }
+
+  newHeader.count=kept;
+  newHeader.writeIndex=kept%newHeader.capacity;
+  newHeader.crc=historyHeaderCrc(newHeader);
+
+  if(!tmp.seek(0,SeekSet) ||
+     tmp.write(reinterpret_cast<const uint8_t*>(&newHeader),sizeof(newHeader))!=sizeof(newHeader)){
+    src.close();tmp.close();
+    LittleFS.remove(HISTORY_FILTER_TMP_FILE);
+    return false;
+  }
+
+  tmp.flush();
+  src.close();
+  tmp.close();
+
+  LittleFS.remove(HISTORY_FILTER_BAK_FILE);
+
+  if(!LittleFS.rename(HISTORY_FILE,HISTORY_FILTER_BAK_FILE)){
+    LittleFS.remove(HISTORY_FILTER_TMP_FILE);
+    return false;
+  }
+
+  if(!LittleFS.rename(HISTORY_FILTER_TMP_FILE,HISTORY_FILE)){
+    LittleFS.rename(HISTORY_FILTER_BAK_FILE,HISTORY_FILE);
+    LittleFS.remove(HISTORY_FILTER_TMP_FILE);
+    return false;
+  }
+
+  LittleFS.remove(HISTORY_FILTER_BAK_FILE);
+
+  historyHeader=newHeader;
+  historyCurrentValid=false;
+  historyInvalidateStatsCache();
+
+  return true;
+}
+
+bool historyCompactAdjacentDuplicates(uint32_t& removed,uint32_t& invalid){
+  removed=0;
+  invalid=0;
+  historyCompactPerformed=false;
+
+  if(!historyReady)return false;
+  if(historyHeader.count==0)return true;
+
+  Serial.print(F("[HISTORY COMPACT] Start count="));
+  Serial.println(historyHeader.count);
+
+  File src=LittleFS.open(HISTORY_FILE,"r");
+  if(!src){
+    Serial.println(F("[HISTORY COMPACT] History-Datei nicht lesbar"));
+    return false;
+  }
+
+  LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
+  File tmp=LittleFS.open(HISTORY_COMPACT_TMP_FILE,"w+");
+  if(!tmp){
+    src.close();
+    Serial.println(F("[HISTORY COMPACT] Temp-Datei nicht erstellbar"));
+    return false;
+  }
+
+  HistoryHeader newHeader=historyHeader;
+  newHeader.count=0;
+  newHeader.writeIndex=0;
+  newHeader.crc=historyHeaderCrc(newHeader);
+
+  if(tmp.write(reinterpret_cast<const uint8_t*>(&newHeader),sizeof(newHeader))!=sizeof(newHeader)){
+    src.close();tmp.close();
+    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
+    return false;
+  }
+
+  const uint32_t oldest=historyOldestPhysicalIndex();
+  DailyHistoryRecord pending{};
+  bool havePending=false;
+  uint32_t kept=0;
+
+  auto flushPending=[&]()->bool{
+    if(!havePending)return true;
+    const uint32_t offset=sizeof(HistoryHeader)+kept*sizeof(DailyHistoryRecord);
+    if(!tmp.seek(offset,SeekSet))return false;
+    if(tmp.write(reinterpret_cast<const uint8_t*>(&pending),sizeof(pending))!=sizeof(pending))return false;
+    kept++;
+    havePending=false;
+    return true;
+  };
+
+  for(uint32_t li=0;li<historyHeader.count;li++){
+    const uint32_t physical=(oldest+li)%historyHeader.capacity;
+    DailyHistoryRecord r;
+
+    if(!historyReadRecordFromOpenFile(src,physical,r)){
+      invalid++;
+      if((li&0x1F)==0)yield();
+      continue;
+    }
+
+    if(!havePending){
+      pending=r;
+      havePending=true;
+    }else if(r.dayKey==pending.dayKey){
+      pending=r;
+      removed++;
+    }else{
+      if(!flushPending()){
+        src.close();tmp.close();
+        LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
+        return false;
+      }
+      pending=r;
+      havePending=true;
+    }
+
+    if((li&0x1F)==0)yield();
+  }
+
+  if(!flushPending()){
+    src.close();tmp.close();
+    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
+    return false;
+  }
+
+  newHeader.count=kept;
+  newHeader.writeIndex=kept%newHeader.capacity;
+  newHeader.crc=historyHeaderCrc(newHeader);
+
+  if(!tmp.seek(0,SeekSet) ||
+     tmp.write(reinterpret_cast<const uint8_t*>(&newHeader),sizeof(newHeader))!=sizeof(newHeader)){
+    src.close();tmp.close();
+    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
+    return false;
+  }
+
+  tmp.flush();
+  src.close();
+  tmp.close();
+  yield();
+
+  if(removed==0 && invalid==0){
+    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
+    Serial.println(F("[HISTORY COMPACT] Keine direkten Duplikate gefunden"));
+    return true;
+  }
+
+  LittleFS.remove(HISTORY_COMPACT_BAK_FILE);
+
+  if(!LittleFS.rename(HISTORY_FILE,HISTORY_COMPACT_BAK_FILE)){
+    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
+    return false;
+  }
+
+  if(!LittleFS.rename(HISTORY_COMPACT_TMP_FILE,HISTORY_FILE)){
+    LittleFS.rename(HISTORY_COMPACT_BAK_FILE,HISTORY_FILE);
+    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
+    return false;
+  }
+
+  LittleFS.remove(HISTORY_COMPACT_BAK_FILE);
+
+  historyHeader=newHeader;
+  historyCurrentValid=false;
+  historyInvalidateStatsCache();
+
+  historyCompactDuplicates=removed;
+  historyCompactInvalid=invalid;
+  historyCompactPerformed=true;
+
+  Serial.print(F("[HISTORY COMPACT] Fertig entfernt="));
+  Serial.print(removed);
+  Serial.print(F(" invalid="));
+  Serial.print(invalid);
+  Serial.print(F(" count="));
+  Serial.println(historyHeader.count);
+
+  return true;
+}
+
+HistoryDuplicateScanResult historyScanDuplicates(){
+  HistoryDuplicateScanResult result{};
+  result.ok=false;
+
+  if(!historyReady)return result;
+
+  File f=LittleFS.open(HISTORY_FILE,"r");
+  if(!f)return result;
+
+  result.total=historyHeader.count;
+
+  uint32_t lastDay=0;
+  bool haveLastDay=false;
+  int32_t previousOrdinal=INT32_MIN;
+
+  for(uint32_t i=0;i<historyHeader.count;i++){
+    DailyHistoryRecord rec;
+
+    if(!historyReadChronologicalFromOpenFile(f,i,rec)){
+      result.invalid++;
+      if((i&0x7F)==0)yield();
+      continue;
+    }
+
+    result.valid++;
+
+    const int32_t ord=historyDayOrdinal(rec.dayKey);
+    if(ord>=0){
+      if(previousOrdinal!=INT32_MIN && ord<previousOrdinal)result.outOfOrder++;
+      previousOrdinal=ord;
+    }
+
+    if(haveLastDay && rec.dayKey==lastDay){
+      result.duplicates++;
+    }else{
+      lastDay=rec.dayKey;
+      haveLastDay=true;
+      result.uniqueDays++;
+    }
+
+    if((i&0x7F)==0)yield();
+  }
+
+  f.close();
+  result.ok=true;
+
+  Serial.print(F("[HISTORY DUPSCAN] total="));
+  Serial.print(result.total);
+  Serial.print(F(" valid="));
+  Serial.print(result.valid);
+  Serial.print(F(" unique="));
+  Serial.print(result.uniqueDays);
+  Serial.print(F(" duplicates="));
+  Serial.print(result.duplicates);
+  Serial.print(F(" invalid="));
+  Serial.print(result.invalid);
+  Serial.print(F(" outOfOrder="));
+  Serial.println(result.outOfOrder);
+
+  return result;
+}
+
+void handleHistoryMaintenancePage(){
+  const uint32_t scanStartMs=millis();
+  const HistoryDuplicateScanResult dupScan=historyScanDuplicates();
+  const uint32_t scanTimeMs=millis()-scanStartMs;
+  const uint32_t measuredRecords=historyCountSource(HISTORY_MEASURED);
+  const uint32_t importedRecords=historyCountSource(HISTORY_IMPORTED);
+  const uint32_t testRecords=historyCountSource(HISTORY_TEST);
+
+  webStreamBegin(F("History Wartung"));
+  webStreamNav(1);
+
+  server.sendContent(F(
+    "<div class='card'><div class='topbar'><h1>History Wartung</h1>"
+    "<div class='links'><a class='btn' href='/history'>Zur Historie</a></div></div>"
+    "<p class='muted'>Prüft die gespeicherten Tagesdatensätze auf doppelte Tage, ungültige Records und falsche Reihenfolge.</p>"
+    "<div class='grid'>"
+  ));
+
+  webMetricCard(F("Aktuelle Records"),String(historyHeader.count));
+  webMetricCard(F("Scan: Gültig"),dupScan.ok?String(dupScan.valid):String(F("FEHLER")));
+  webMetricCard(F("Scan: Eindeutige Tage"),dupScan.ok?String(dupScan.uniqueDays):String(F("FEHLER")));
+  webMetricCard(F("Scan: Duplikate"),dupScan.ok?String(dupScan.duplicates):String(F("FEHLER")));
+  webMetricCard(F("Scan: Ungültig"),dupScan.ok?String(dupScan.invalid):String(F("FEHLER")));
+  webMetricCard(F("Scan: Reihenfolgefehler"),dupScan.ok?String(dupScan.outOfOrder):String(F("FEHLER")));
+  webMetricCard(F("Scan-Dauer"),String(scanTimeMs)+F(" ms"));
+  webMetricCard(F("Duplikate erkannt"),String(historyRepairDuplicates));
+  webMetricCard(F("Ungültig / CRC"),String(historyRepairInvalid));
+  webMetricCard(F("Reihenfolgefehler"),String(historyRepairOutOfOrder));
+  webMetricCard(F("Entfernt"),String(historyRepairRemoved));
+  webMetricCard(F("Letzte Reparatur"),
+    historyRepairPerformed?String(F("JA")):String(F("NEIN")));
+  webMetricCard(F("Quelle: Gemessen"),String(measuredRecords)+F(" Records"));
+  webMetricCard(F("Quelle: Import"),String(importedRecords)+F(" Records"));
+  webMetricCard(F("Quelle: Test"),String(testRecords)+F(" Records"));
+  webMetricCard(F("Quick-Compact entfernt"),String(historyCompactDuplicates));
+  webMetricCard(F("Quick-Compact invalid"),String(historyCompactInvalid));
+
+  server.sendContent(F(
+    "</div>"
+  ));
+
+  if(!dupScan.ok){
+    server.sendContent(F("<p class='muted'>Duplicate-Scan konnte nicht ausgeführt werden.</p>"));
+  }else if(dupScan.duplicates>0 || dupScan.invalid>0 || dupScan.outOfOrder>0){
+    server.sendContent(F("<p style='color:#ffb52e'><b>Bereinigung empfohlen:</b> "));
+    webSendSafe(String(dupScan.duplicates));
+    server.sendContent(F(" Duplikate, "));
+    webSendSafe(String(dupScan.invalid));
+    server.sendContent(F(" ungültige Records und "));
+    webSendSafe(String(dupScan.outOfOrder));
+    server.sendContent(F(" Reihenfolgefehler erkannt.</p>"));
+  }else{
+    server.sendContent(F("<p style='color:#42d65b'><b>History sauber:</b> keine Duplikate, ungültigen Records oder Reihenfolgefehler gefunden.</p>"));
+  }
+
+  server.sendContent(F(
+    "<form method='POST' action='/history/maintenance/compact' style='margin-top:16px'>"
+    "<button type='submit' onclick=\"this.disabled=true;this.textContent='Bereinigung läuft …';this.form.submit();\">"
+    "Schnelle Duplikatbereinigung</button></form>"
+    "<form method='POST' action='/history/maintenance/repair' style='margin-top:16px' "
+    "onsubmit=\"return confirm('History vollständig prüfen und chronologisch normalisieren? Je nach Datenmenge kann das einige Zeit dauern.');\">"
+    "<button type='submit' onclick=\"this.disabled=true;this.textContent='Normalisierung läuft …';\">"
+    "Chronologie normalisieren / reparieren</button></form>"
+    "<form method='POST' action='/history/maintenance/delete-test' style='margin-top:10px'>"
+    "<button class='danger' type='submit' "
+    "onclick=\"return confirm('Wirklich ALLE Testdaten löschen? Gemessene und importierte Daten bleiben erhalten.')\">"
+    "Nur Testdaten löschen</button></form>"
+    "<form method='POST' action='/history/maintenance/delete-imported' style='margin-top:10px'>"
+    "<button class='danger' type='submit' "
+    "onclick=\"return confirm('Wirklich ALLE importierten History-Daten löschen? Gemessene Daten und Testdaten bleiben erhalten.')\">"
+    "Nur Importdaten löschen</button></form>"
+    "<p class='muted' style='margin-top:12px'>"
+    "<b>Chronologie normalisieren</b> ist besonders nach dem Import älterer Daten sinnvoll, wenn bereits neuere Messwerte vorhanden waren. "
+    "Dabei werden die Records nach Kalendertag sortiert; pro Tag gewinnt der letzte gültige Datensatz. "
+    "Die Original-History wird nur ersetzt, wenn die neue reparierte Datei vollständig geschrieben wurde. "
+    "Bei einer fehlerfreien Prüfung bleibt die Datei unverändert."
+    "</p></div>"
+  ));
+
+  webStreamEnd();
+}
+
+void handleHistoryCompactDuplicates(){
+  const uint32_t before=historyHeader.count;
+  const uint32_t heapBefore=ESP.getFreeHeap();
+  const uint32_t startMs=millis();
+
+  uint32_t removed=0,invalid=0;
+  const bool ok=historyCompactAdjacentDuplicates(removed,invalid);
+
+  const uint32_t elapsed=millis()-startMs;
+  const uint32_t heapAfter=ESP.getFreeHeap();
+
+  Serial.print(F("[HISTORY COMPACT] Ergebnis="));
+  Serial.print(ok?F("OK"):F("FEHLER"));
+  Serial.print(F(" time="));
+  Serial.print(elapsed);
+  Serial.print(F(" ms heap="));
+  Serial.print(heapBefore);
+  Serial.print(F("->"));
+  Serial.println(heapAfter);
+
+  webStreamBegin(F("History Wartung"));
+  webStreamNav(1);
+
+  server.sendContent(F(
+    "<div class='card'><h1>Schnelle Duplikatbereinigung</h1><div class='grid'>"
+  ));
+
+  webMetricCard(F("Ergebnis"),ok?String(F("OK")):String(F("FEHLER")));
+  webMetricCard(F("Vorher"),String(before)+F(" Records"));
+  webMetricCard(F("Nachher"),String(historyHeader.count)+F(" Records"));
+  webMetricCard(F("Duplikate entfernt"),String(removed));
+  webMetricCard(F("Ungültige entfernt"),String(invalid));
+  webMetricCard(F("Dauer"),String(elapsed)+F(" ms"));
+
+  server.sendContent(F(
+    "</div><p class='muted'>Diese schnelle Bereinigung fasst direkt aufeinanderfolgende gleiche Kalendertage zusammen. "
+    "Der letzte Datensatz des Tages gewinnt.</p>"
+    "<div class='links' style='margin-top:16px'>"
+    "<a class='btn' href='/history/maintenance'>Wartung</a>"
+    "<a class='btn' href='/history'>Historie</a>"
+    "</div></div>"
+  ));
+
+  webStreamEnd();
+}
+
+void handleHistoryMaintenanceRepair(){
+  const uint32_t heapBefore=ESP.getFreeHeap();
+  const uint32_t startMs=millis();
+
+  Serial.println(F("[HISTORY MAINT] Manueller Integritaetslauf gestartet"));
+
+  const bool ok=historyIntegrityCheckAndRepair();
+
+  const uint32_t elapsed=millis()-startMs;
+  const uint32_t heapAfter=ESP.getFreeHeap();
+
