@@ -37,7 +37,7 @@ static_assert(sizeof(DailyHistoryRecordV2) == 24, "DailyHistoryRecordV2 muss 24 
 struct __attribute__((packed)) DailyHistoryRecord {
   uint32_t dayKey;          // YYYYMMDD
   uint16_t samples;
-  uint16_t levelLiters;     // Tages-Endstand
+  uint16_t levelLiters;     // end-of-day level
   uint16_t avgPermille;     // 0..1000 = 0.0..100.0 %
   uint16_t minPermille;
   uint16_t maxPermille;
@@ -47,9 +47,9 @@ struct __attribute__((packed)) DailyHistoryRecord {
   uint8_t source;
   uint8_t flags;
 
-  // History V3 Klima, kompakt:
-  // Temperatur = 0.5 C Schritte, Code 0=-40.0 C, 250=85.0 C, 255=kein Wert.
-  // Feuchte = volle Prozent 0..100, 255=kein Wert.
+  // History V3 climate data, compact:
+  // Temperature = 0.5 C steps, code 0=-40.0 C, 250=85.0 C, 255=no value.
+  // Humidity = whole percent 0..100, 255=no value.
   uint8_t tempAvgHalfC;
   uint8_t tempMinHalfC;
   uint8_t tempMaxHalfC;
