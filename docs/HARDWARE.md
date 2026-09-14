@@ -1,8 +1,7 @@
 # Hardware & Verdrahtung / Hardware & Wiring
 
 ## Deutsch
-
-> Hobbyprojekt, kein zertifiziertes Mess- oder Sicherheitssystem. Aufbau und Betrieb auf eigene Verantwortung.
+> Hobbyprojekt, kein zertifiziertes Mess- oder Sicherheitssystem.
 
 | Funktion | D-Pin | GPIO |
 |---|---:|---:|
@@ -14,17 +13,14 @@
 | Nokia CS | D6 | GPIO12 |
 | Nokia RST | D3 | GPIO0 |
 
-I²C: ToF `0x29`, AHT10 optional `0x38`. Aktuelle Firmware: **SDA=D2, SCL=D1**. VL53L1X wurde auf realer Classic-Hardware verwendet; VL53L0X bleibt unterstützt.
+I²C: ToF `0x29`, AHT10 optional `0x38`. Aktuell **SDA=D2, SCL=D1**. VL53L1X wurde auf realer Classic-Hardware verwendet; VL53L0X bleibt unterstützt.
 
 ![Verdrahtungsplan / Wiring diagram](images/wiring-diagram.svg)
 
-Hinweise: 3,3-V-Logik, gemeinsame Masse, Modulversorgung nach Breakout-Spezifikation. ToF XSHUT/INT werden nicht benötigt. Nokia-Backlight ist kein definierter Firmware-Ausgang.
-
-Die ToF-Messung liefert den Abstand zur Flüssigkeitsoberfläche; aus Geometrie und Kalibrierung entstehen Füllhöhe, Prozent und Liter.
+3,3-V-Logik verwenden, alle Massen verbinden, Modulversorgung nach Breakout-Spezifikation. XSHUT/INT werden nicht benötigt. Nokia-Backlight ist kein definierter Firmware-Ausgang.
 
 ## English
-
-> Hobby project, not a certified measurement or safety system. Assembly and operation are at your own risk.
+> Hobby project, not a certified measurement or safety system.
 
 | Function | D pin | GPIO |
 |---|---:|---:|
@@ -36,8 +32,6 @@ Die ToF-Messung liefert den Abstand zur Flüssigkeitsoberfläche; aus Geometrie 
 | Nokia CS | D6 | GPIO12 |
 | Nokia RST | D3 | GPIO0 |
 
-I²C: ToF `0x29`, optional AHT10 `0x38`. Current firmware: **SDA=D2, SCL=D1**. VL53L1X has been used on real Classic hardware; VL53L0X remains supported.
+I²C: ToF `0x29`, optional AHT10 `0x38`. Current wiring is **SDA=D2, SCL=D1**. VL53L1X has been used on real Classic hardware; VL53L0X remains supported.
 
-Notes: 3.3-V logic, common ground, module power according to breakout specification. ToF XSHUT/INT are not required. Nokia backlight is not assigned as a firmware output.
-
-The ToF sensor measures distance to the liquid surface; geometry and calibration produce liquid height, percentage and liters.
+Use 3.3-V logic, common ground, and power each breakout according to its specification. XSHUT/INT are not required. Nokia backlight is not assigned as a firmware output.
