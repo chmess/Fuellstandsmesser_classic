@@ -123,14 +123,14 @@ void noteWebRequest() {
 }
 
 void webPrepareConnectionClose(){
-  // ESP8266: Browser-KeepAlive kann mehrere TCP-Puffer gleichzeitig halten.
-  // Fuer dieses kleine Geraet ist "Connection: close" RAM-schonender.
+  // ESP8266: browser keep-alive can retain several TCP buffers at the same time.
+  // For this small device, "Connection: close" uses less RAM.
   server.sendHeader("Connection","close");
 }
 
 void webFinishConnection(){
-  // Nach komplett gesendeter Antwort Socket explizit freigeben.
-  // Ein kurzes yield gibt lwIP Gelegenheit, ACK/FIN abzuarbeiten.
+  // Explicitly release the socket after the response has been sent completely.
+  // A short yield gives lwIP a chance to process ACK/FIN.
   yield();
   WiFiClient c=server.client();
   if(c && c.connected()){
@@ -139,9 +139,9 @@ void webFinishConnection(){
 }
 
 void webSendSafe(const String& value) {
-  // WICHTIG bei ESP8266 chunked transfer:
-  // sendContent("") sendet den 0-Byte-Endchunk und beendet die HTTP-Antwort.
-  // Leere Konfigurationswerte duerfen deshalb NICHT direkt an sendContent().
+  // IMPORTANT for ESP8266 chunked transfer:
+  // sendContent("") sends the 0-byte terminating chunk and ends the HTTP response.
+  // Therefore empty configuration values must NOT be passed directly to sendContent().
   if (value.length() > 0) {
     server.sendContent(value);
   }
@@ -178,7 +178,7 @@ void webStreamBegin(const __FlashStringHelper* title) {
   webPrepareConnectionClose();
   server.setContentLength(CONTENT_LENGTH_UNKNOWN);
   server.send(200, "text/html; charset=utf-8", "");
-  server.sendContent(F("<!DOCTYPE html><html lang='de'><head><meta charset='UTF-8'>"
+  server.sendContent(F("<!DOCTYPE html><html lang='" APP_LANGUAGE_CODE "'><head><meta charset='UTF-8'>"
                        "<meta name='viewport' content='width=device-width,initial-scale=1'><title>"));
   server.sendContent(title);
   server.sendContent(F("</title><style>"
@@ -197,18 +197,30 @@ void webStreamBegin(const __FlashStringHelper* title) {
                        ".topbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}.links{display:flex;gap:6px;flex-wrap:wrap}"
                        "@media(max-width:700px){.grid{grid-template-columns:1fr}.nav{grid-template-columns:repeat(2,1fr)}}"
                        "</style></head><body><div class='wrap'>"));
+  server.sendContent(F("<script>window.APP_LANG='" APP_LANGUAGE_CODE "';window.APP_LOCALE='" APP_LOCALE_CODE "';</script>"));
+  server.sendContent(F("<script>window.I18N={"
+    "history:'" LTXT_HISTORY "',settings:'" LTXT_SETTINGS "',system:'" LTXT_SYSTEM "',"
+    "tankLevel:'" LTXT_TANK_LEVEL "',consumption:'" LTXT_CONSUMPTION "',refill:'" LTXT_REFILL "',refills:'" LTXT_REFILLS "',"
+    "temperature:'" LTXT_TEMPERATURE "',humidity:'" LTXT_HUMIDITY_SHORT "',source:'" LTXT_SOURCE "',amount:'" LTXT_AMOUNT "',"
+    "measured:'" LTXT_MEASURED "',testData:'" LTXT_TEST_DATA "',importText:'" LTXT_IMPORT "',days:'" LTXT_DAYS "',years:'" LTXT_YEARS "',months:'" LTXT_MONTHS "',"
+    "noData:'" LTXT_NO_DATA "',loadingHistory:'" LTXT_HISTORY_LOADING "',monthlyComparison:'" LTXT_MONTHLY_COMPARISON "',loadingMonthly:'" LTXT_MONTHLY_LOADING "',"
+    "error:'" LTXT_ERROR "',date:'" LTXT_DATE "',noRefills:'" LTXT_NO_CONFIRMED_REFILLS "',refillLoadError:'" LTXT_REFILLS_LOAD_ERROR "',"
+    "climate:'" LTXT_CLIMATE_DATA "',noClimateData:'" LTXT_NO_CLIMATE_DATA "',loaded:'" LTXT_LOADED "',points:'" LTXT_POINTS_LOWER "'"
+    "};</script>"));
 }
 
 void webStreamNav(uint8_t active) {
   server.sendContent(F("<div class='nav'>"));
-  server.sendContent(active==0?F("<a class='active' href='/'>Dashboard</a>"):F("<a href='/'>Dashboard</a>"));
-  server.sendContent(active==1?F("<a class='active' href='/history'>Historie</a>"):F("<a href='/history'>Historie</a>"));
-  server.sendContent(active==2?F("<a class='active' href='/settings'>Einstellungen</a>"):F("<a href='/settings'>Einstellungen</a>"));
-  server.sendContent(active==3?F("<a class='active' href='/systemstatus'>System</a>"):F("<a href='/systemstatus'>System</a>"));
+  server.sendContent(active==0?F("<a class='active' href='/'>" LTXT_DASHBOARD "</a>"):F("<a href='/'>" LTXT_DASHBOARD "</a>"));
+  server.sendContent(active==1?F("<a class='active' href='/history'>" LTXT_HISTORY "</a>"):F("<a href='/history'>" LTXT_HISTORY "</a>"));
+  server.sendContent(active==2?F("<a class='active' href='/settings'>" LTXT_SETTINGS "</a>"):F("<a href='/settings'>" LTXT_SETTINGS "</a>"));
+  server.sendContent(active==3?F("<a class='active' href='/systemstatus'>" LTXT_SYSTEM "</a>"):F("<a href='/systemstatus'>" LTXT_SYSTEM "</a>"));
   server.sendContent(F("</div>"));
 }
 
 void webStreamEnd() {
+  // All visible text is selected at compile time from languages/lang_*.h.
+
   server.sendContent(F("<div style='color:#777;text-align:center;padding:8px 0'>Fuellstandsmesser_classic "));
   webSendSafe(FW_VERSION);
   server.sendContent(F("</div></div></body></html>"));
@@ -218,8 +230,8 @@ void webStreamEnd() {
 
 
 void historyBuildStatsCache() {
-  // Maximal einmal pro 60 s neu berechnen. Nach Schreibvorgaengen wird
-  // der Cache explizit invalidiert.
+  // Recalculate at most once every 60 s. After write operations,
+  // the cache is explicitly invalidated.
   if (historyStatsCache.valid &&
       (uint32_t)(millis() - historyStatsCache.builtMs) < 60000UL) {
     return;
@@ -241,7 +253,7 @@ void historyBuildStatsCache() {
   File f = LittleFS.open(HISTORY_FILE, "r");
   if (!f) return;
 
-  // Zeitanker nur EINMAL bestimmen.
+  // Determine the time anchor only ONCE.
   uint32_t anchorDay=0;
   bool anchorFromClock=historyDateNow(anchorDay);
 
@@ -252,7 +264,7 @@ void historyBuildStatsCache() {
   if(!anchorFromClock){
     if(haveNewest)anchorDay=newest.dayKey;
   }else if(haveNewest && newest.dayKey>anchorDay){
-    // Schutz gegen veraltete/falsche Uhrzeit.
+    // Protection against stale/incorrect time.
     anchorDay=newest.dayKey;
     anchorFromClock=false;
   }
@@ -269,6 +281,8 @@ void historyBuildStatsCache() {
   const uint32_t first30  = historyFirstDayForAnchor(anchorDay,30);
   const uint32_t first365 = historyFirstDayForAnchor(anchorDay,365);
 
+  // Read backwards. For duplicates, the most recently written record
+  // for a day is encountered first and therefore wins automatically.
   const uint32_t oldest=historyOldestPhysicalIndex();
   uint32_t scanned=0,eligible=0,uniqueDays=0,duplicatesSkipped=0;
   uint32_t lastDaySeen=0;
@@ -367,12 +381,12 @@ void handleRoot() {
     ".chartToggles{margin-left:auto;padding:2px 0}.chartToggles label{padding:5px 8px;border:1px solid #3b3b3b;border-radius:999px;background:#202020;cursor:pointer}.chartToggles label.off{opacity:.38;cursor:not-allowed}.chartToggles input:disabled{cursor:not-allowed}.periods{display:flex;gap:6px;flex-wrap:wrap}.periodBtn,.monthYearsBtn{min-height:32px}.muted.compact{margin:5px 0 8px}</style><div class='dash'>"
   ));
   server.sendContent(F(
-    "<div class='tile hero'><h2>Füllstand</h2><div class='heroGrid'><div class='heroInfo'><div><span id='liters' class='big'>--</span> L &nbsp; <b id='percent'>-- %</b></div>"
+    "<div class='tile hero'><h2>" LTXT_TANK_LEVEL "</h2><div class='heroGrid'><div class='heroInfo'><div><span id='liters' class='big'>--</span> L &nbsp; <b id='percent'>-- %</b></div>"
     "<div class='bar'><div id='bar' class='barFill'></div></div>"
-    "<div class='grid'><div class='metric'>Füllhöhe<b id='height'>-- mm</b></div><div class='metric'>Sensorabstand<b id='distance'>-- mm</b></div>"
-    "<div class='metric'>Tankfaktor<b id='lpm'>-- L/mm</b></div><div class='metric'>RSSI<b id='rssi'>-- dBm</b></div></div>"
+    "<div class='grid'><div class='metric'>" LTXT_FILL_HEIGHT "<b id='height'>-- mm</b></div><div class='metric'>" LTXT_SENSOR_DISTANCE "<b id='distance'>-- mm</b></div>"
+    "<div class='metric'>" LTXT_TANK_FACTOR "<b id='lpm'>-- L/mm</b></div><div class='metric'>RSSI<b id='rssi'>-- dBm</b></div></div>"
     "<p id='updated' class='muted'>Warte auf Messdaten …</p></div>"
-    "<div class='tankBox'><svg class='tankSvg' viewBox='0 0 240 280' xmlns='http://www.w3.org/2000/svg' aria-label='Heizöltank'>"
+    LHTML_TANK_SVG_START
     "<defs>"
     "<linearGradient id='tankOilGrad' x1='0' x2='0' y1='0' y2='1'><stop id='oilTop' offset='0%' stop-color='#ffd35a'/><stop id='oilBottom' offset='100%' stop-color='#c97a00'/></linearGradient>"
   ));
@@ -406,42 +420,42 @@ void handleRoot() {
     "<line x1='120' y1='48' x2='120' y2='62' stroke='#8895a2' stroke-width='4'/><rect x='108' y='40' width='24' height='10' rx='3' fill='#7f8d99'/>"
     "<rect x='54' y='194' width='22' height='12' rx='3' fill='#6f7d8a'/><rect x='164' y='194' width='22' height='12' rx='3' fill='#6f7d8a'/>"
     "</g>"
-    "<text x='120' y='24' text-anchor='middle' class='tankTitle' id='tankShapeText'>Heizöltank</text>"
+    LHTML_TANK_TITLE
     "<rect x='68' y='88' width='104' height='78' rx='10' fill='#111820' opacity='.78'/>"
   ));
   server.sendContent(F(
     "<text x='120' y='110' text-anchor='middle' class='tankValue' id='tankPercentText'>-- %</text>"
-    "<text x='120' y='126' text-anchor='middle' class='tankSmall'>Füllstand</text>"
+    "<text x='120' y='126' text-anchor='middle' class='tankSmall'>" LTXT_TANK_LEVEL "</text>"
     "<text x='78' y='145' class='tankLabel'>Liter</text><text x='162' y='145' text-anchor='end' class='tankValue' id='tankLitersText'>-- L</text>"
-    "<text x='78' y='160' class='tankLabel'>Höhe</text><text x='162' y='160' text-anchor='end' class='tankValue' id='tankHeightText'>-- mm</text>"
+    LHTML_TANK_HEIGHT
     "<text x='78' y='175' class='tankLabel'>Distanz</text><text x='162' y='175' text-anchor='end' class='tankValue' id='tankDistanceText'>-- mm</text>"
     "<text x='120' y='270' text-anchor='middle' class='tankSmall'>Tankdarstellung · live</text>"
     "</svg></div></div></div>"
-    "<div class='tile side'><h2>Verbrauch</h2><div class='grid'>"
-    "<div class='metric'>Heute<b id='c1'>-- L</b></div><div class='metric'>7 Tage<b id='c7'>-- L</b></div>"
+    "<div class='tile side'><h2>" LTXT_CONSUMPTION "</h2><div class='grid'>"
+    "<div class='metric'>" LTXT_TODAY "<b id='c1'>-- L</b></div><div class='metric'>7 " LTXT_DAYS "<b id='c7'>-- L</b></div>"
   ));
   server.sendContent(F(
-    "<div class='metric'>30 Tage<b id='c30'>-- L</b></div><div class='metric'>365 Tage<b id='c365'>-- L</b></div></div>"
-    "<h2>Status</h2><div class='statusGrid'><div class='status'><span id='dw' class='dot gray'></span>WLAN</div>"
+    "<div class='metric'>30 " LTXT_DAYS "<b id='c30'>-- L</b></div><div class='metric'>365 " LTXT_DAYS "<b id='c365'>-- L</b></div></div>"
+    LHTML_STATUS_WIFI
     "<div class='status'><span id='dm' class='dot gray'></span>MQTT</div><div class='status'><span id='dt' class='dot gray'></span>ToF</div></div></div>"
-    "<div class='tile wide'><div class='topbar'><h2>Füllstand & Verbrauch</h2><div class='periods'>"
+    "<div class='tile wide'><div class='topbar'><h2>" LTXT_TANK_LEVEL " &amp; " LTXT_CONSUMPTION "</h2><div class='periods'>"
   ));
   server.sendContent(F(
-    "<button class='periodBtn' data-p='183'>½ Jahr</button><button class='periodBtn active' data-p='365'>1 Jahr</button>"
-    "<button class='periodBtn' data-p='1825'>5 Jahre</button><button class='periodBtn' data-p='3650'>10 Jahre</button></div>"
-    "<div class='chartToggles'><label><input id='showTemp' type='checkbox' checked>Temperatur</label><label><input id='showHum' type='checkbox' checked>Feuchte</label></div></div>"
-    "<div id='hst' class='muted compact'>Historie wird geladen …</div><div class='chartWrap'><canvas id='chart' class='chart'></canvas><div id='chartTip' class='chartTip'></div></div>"
-    "<div class='legend'><span><i style='background:#4da6ff'></i>Füllstand</span><span><i style='background:#ffb52e'></i>Verbrauch</span><span><i style='background:#42d65b'></i>Nachfüllung</span><span><i style='background:#ff8a65'></i>Temperatur</span><span><i style='background:#26c6da'></i>Luftfeuchte</span><span><i style='background:#ffd166'></i>Import</span><span><i style='background:#ff6b6b'></i>Testdaten</span></div></div>"
-    "<div class='tile wide'><h2>Umgebung · AHT10</h2><div class='grid'>"
-    "<div class='metric'>Temperatur<b id='ahtTemp'>-- °C</b></div><div class='metric'>Luftfeuchte<b id='ahtHum'>-- %</b></div>"
-    "<div class='metric'>Taupunkt<b id='ahtDew'>-- °C</b></div><div class='metric'>Kondensationsreserve<b id='ahtReserve'>-- °C</b></div>"
-    "<div class='metric'>AHT10<b id='ahtState'>--</b></div><div class='metric'>Messwertalter<b id='ahtAge'>-- s</b></div></div></div></div>"
+    "<button class='periodBtn' data-p='183'>" LTXT_HALF_YEAR "</button><button class='periodBtn active' data-p='365'>" LTXT_ONE_YEAR "</button>"
+    "<button class='periodBtn' data-p='1825'>" LTXT_FIVE_YEARS "</button><button class='periodBtn' data-p='3650'>" LTXT_TEN_YEARS "</button></div>"
+    "<div class='chartToggles'><label><input id='showTemp' type='checkbox' checked>" LTXT_TEMPERATURE "</label><label><input id='showHum' type='checkbox' checked>" LTXT_HUMIDITY_SHORT "</label></div></div>"
+    "<div id='hst' class='muted compact'>" LTXT_HISTORY_LOADING "</div><div class='chartWrap'><canvas id='chart' class='chart'></canvas><div id='chartTip' class='chartTip'></div></div>"
+    "<div class='legend'><span><i style='background:#4da6ff'></i>" LTXT_TANK_LEVEL "</span><span><i style='background:#ffb52e'></i>" LTXT_CONSUMPTION "</span><span><i style='background:#42d65b'></i>" LTXT_REFILL "</span><span><i style='background:#ff8a65'></i>" LTXT_TEMPERATURE "</span><span><i style='background:#26c6da'></i>" LTXT_HUMIDITY "</span><span><i style='background:#ffd166'></i>" LTXT_IMPORT "</span><span><i style='background:#ff6b6b'></i>" LTXT_TEST_DATA "</span></div></div>"
+    "<div class='tile wide'><h2>AHT10</h2><div class='grid'>"
+    "<div class='metric'>" LTXT_TEMPERATURE "<b id='ahtTemp'>-- °C</b></div><div class='metric'>" LTXT_HUMIDITY "<b id='ahtHum'>-- %</b></div>"
+    "<div class='metric'>" LTXT_DEW_POINT "<b id='ahtDew'>-- °C</b></div><div class='metric'>" LTXT_CONDENSATION_MARGIN "<b id='ahtReserve'>-- °C</b></div>"
+    LHTML_AHT_AGE
   ));
 
   server.sendContent(R"JS(
 <script>
 (function(){
-const $=i=>document.getElementById(i),f=(v,d=1)=>Number.isFinite(Number(v))?Number(v).toFixed(d):'--';
+const $=i=>document.getElementById(i),f=(v,d=1)=>Number.isFinite(Number(v))?Number(v).toFixed(d):'--',T=window.I18N||{};
 let p=365,items=[],climateItems=[],dbGeom=null,showTemp=true,showHum=true;
 function updateClimateToggleState(){
   const has=climateItems.length>0;
@@ -563,22 +577,22 @@ function dbShowTip(e){
   if(bi<0||bd>28){dbTip.style.display='none';return}
 )JS");
   server.sendContent(R"JS(
-  const a=items[bi],sn=Number(a.source)===1?'Import':(Number(a.source)===2?'Test':'Gemessen');
-  dbTip.innerHTML='<b>'+new Date(a.time).toLocaleDateString('de-DE')+'</b><br>Füllstand: '+f(a.percent)+' %<br>Menge: '+f(a.liters)+' L<br>Verbrauch: '+f(a.consumedLiters)+' L<br>Quelle: '+sn+(Number(a.refillLiters)>0?'<br><span style="color:#65e572">Nachfüllung: +'+f(a.refillLiters)+' L</span>':'');
+  const a=items[bi],sn=Number(a.source)===1?(T.importText||'Import'):(Number(a.source)===2?(T.testData||'Test'):(T.measured||'Measured'));
+  dbTip.innerHTML='<b>'+new Date(a.time).toLocaleDateString(window.APP_LOCALE||'de-DE')+'</b><br>Füllstand: '+f(a.percent)+' %<br>Menge: '+f(a.liters)+' L<br>Verbrauch: '+f(a.consumedLiters)+' L<br>Quelle: '+sn+(Number(a.refillLiters)>0?'<br><span style="color:#65e572">Nachfüllung: +'+f(a.refillLiters)+' L</span>':'');
   dbTip.style.display='block';dbTip.style.left=Math.max(5,Math.min(dbC.clientWidth-185,mx+10))+'px';dbTip.style.top='8px';
 }
 dbC.onmousemove=dbShowTip;dbC.ontouchmove=dbShowTip;dbC.onmouseleave=()=>dbTip.style.display='none';dbC.ontouchend=()=>dbTip.style.display='none';
 
 async function hist(){
   try{
-    $('hst').textContent='Historie wird geladen …';
+    $('hst').textContent=T.loadingHistory||'Loading history …';
 )JS");
   server.sendContent(R"JS(
     let r=await fetch('/api/history?days='+p+'&x='+Date.now(),{cache:'no-store'}),raw=await r.text();if(!r.ok)throw new Error('HTTP '+r.status);
     items=(JSON.parse(raw).items||[]);climateItems=[];
     try{let cr=await fetch('/api/history/climate?days='+p+'&x='+Date.now(),{cache:'no-store'});if(cr.ok)climateItems=(JSON.parse(await cr.text()).items||[])}catch(_){}
     $('hst').textContent='Geladen: '+items.length+' Punkte'+(climateItems.length?' · Klima '+climateItems.length+' Tage':' · keine Klimadaten');updateClimateToggleState();draw();
-  }catch(e){items=[];climateItems=[];$('hst').textContent='Historie-Fehler: '+e.message;updateClimateToggleState();draw()}
+  }catch(e){items=[];climateItems=[];$('hst').textContent=(T.error||'Error')+': '+e.message;updateClimateToggleState();draw()}
 }
 
 document.querySelectorAll('.periodBtn').forEach(b=>b.onclick=()=>{p=Number(b.dataset.p);document.querySelectorAll('.periodBtn').forEach(q=>q.classList.toggle('active',q===b));hist()});
@@ -612,7 +626,7 @@ String checked(bool v) {
 }
 
 void handleSettings() {
-  webStreamBegin(F("Einstellungen"));
+  webStreamBegin(F(LTXT_SETTINGS));
   webStreamNav(2);
 
   server.sendContent(F(
@@ -644,20 +658,22 @@ void handleSettings() {
     "<div class='settingsGrid'>"
   ));
 
+  // Wi-Fi
   server.sendContent(F(
-    "<div class='settingsBlock'><h2>WLAN</h2><p>Netzwerkzugang des Geräts.</p>"
+    LHTML_SETTINGS_WIFI LTXT_NETWORK_ACCESS "</p>"
     "<label>SSID</label><input name='ssid' value='"
   ));
   webSendSafe(String(cfg.wifiSsid));
   server.sendContent(F(
-    "'><label>Passwort</label><input type='password' name='wpass' value='"
+    "'><label>" LTXT_PASSWORD "</label><input type='password' name='wpass' value='"
   ));
   webSendSafe(String(cfg.wifiPass));
   server.sendContent(F("'></div>"));
 
+  // Sensor
   server.sendContent(F(
-    "<div class='settingsBlock'><h2>Sensor</h2><p>ToF-Auswahl und Kalibrierung.</p>"
-    "<label>Typ</label><select name='sensor'><option value='0'"
+    "<div class='settingsBlock'><h2>" LTXT_SENSOR "</h2><p>" LTXT_SENSOR_CALIBRATION "</p>"
+    "<label>" LTXT_TYPE "</label><select name='sensor'><option value='0'"
   ));
   if(cfg.sensorType==SENSOR_AUTO) server.sendContent(F(" selected"));
   server.sendContent(F(">Auto</option><option value='1'"));
@@ -666,75 +682,77 @@ void handleSettings() {
   if(cfg.sensorType==SENSOR_VL53L1X) server.sendContent(F(" selected"));
   server.sendContent(F(
     ">VL53L1X</option></select>"
-    "<label>Sensor-Offset mm</label><input type='number' name='offset' value='"
+    "<label>" LTXT_SENSOR_OFFSET_MM "</label><input type='number' name='offset' value='"
   ));
   webSendSafe(String(cfg.sensorOffsetMm));
   server.sendContent(F(
-    "'><label>Leer-Distanz mm</label><input type='number' step='.1' name='empty' value='"
+    "'><label>" LTXT_EMPTY_DISTANCE_MM "</label><input type='number' step='.1' name='empty' value='"
   ));
   webSendSafe(String(cfg.emptyDistanceMm,1));
   server.sendContent(F(
-    "'><label>Voll-Distanz mm</label><input type='number' step='.1' name='full' value='"
+    "'><label>" LTXT_FULL_DISTANCE_MM "</label><input type='number' step='.1' name='full' value='"
   ));
   webSendSafe(String(cfg.fullDistanceMm,1));
   server.sendContent(F("'></div>"));
 
+  // AHT10 climate
   server.sendContent(F(
-    "<div class='settingsBlock'><h2>AHT10 Klima</h2>"
-    "<p>I²C 0x38 · Temperatur, Luftfeuchte, Taupunkt und Kondensationsreserve.</p>"
+    "<div class='settingsBlock'><h2>" LTXT_AHT_CLIMATE "</h2>"
+    "<p>" LTXT_AHT_DESCRIPTION "</p>"
     "<label><input class='inlineCheck' type='checkbox' name='ahtEnabled'"
   ));
   if(cfg.ahtEnabled)server.sendContent(F(" checked"));
   server.sendContent(F(
-    ">AHT10 aktiv</label>"
-    "<label>Temperatur-Offset °C</label>"
+    ">" LTXT_AHT_ACTIVE "</label>"
+    "<label>" LTXT_TEMP_OFFSET "</label>"
     "<input type='number' step='0.1' min='-20' max='20' name='ahtTempOffset' value='"
   ));
   webSendSafe(String(cfg.ahtTemperatureOffsetC,1));
   server.sendContent(F(
-    "'><label>Feuchte-Offset %</label>"
+    "'><label>" LTXT_HUMIDITY_OFFSET "</label>"
     "<input type='number' step='0.1' min='-50' max='50' name='ahtHumOffset' value='"
   ));
   webSendSafe(String(cfg.ahtHumidityOffsetPercent,1));
   server.sendContent(F(
-    "'><label>Messintervall Sekunden</label>"
+    "'><label>" LTXT_MEASUREMENT_INTERVAL_SECONDS "</label>"
     "<input type='number' min='2' max='300' step='1' name='ahtIntervalS' value='"
   ));
   webSendSafe(String(cfg.ahtIntervalMs/1000UL));
   server.sendContent(F(
-    "'><p class='tankHint'>Taupunkt und Kondensationsreserve werden aus den korrigierten Messwerten berechnet.</p>"
+    "'><p class='tankHint'>" LTXT_AHT_CALC_HINT "</p>"
     "</div>"
   ));
 
+  // Tank
   server.sendContent(F(
-    "<div class='settingsBlock settingsWide'><h2>Tank</h2><p>Abmessungen, Geometrie und berechnete Kapazität.</p>"
+    "<div class='settingsBlock settingsWide'><h2>Tank</h2><p>" LTXT_TANK_DIMENSIONS_DESC "</p>"
     "<div class='tankCfg'><div>"
-    "<label>Geometrie</label><select id='tankGeometry' name='geometry'><option value='0'"
+    "<label>" LTXT_GEOMETRY "</label><select id='tankGeometry' name='geometry'><option value='0'"
   ));
   if(cfg.geometry==GEOMETRY_RECT) server.sendContent(F(" selected"));
-  server.sendContent(F(">Quader / Batterietank</option><option value='1'"));
+  server.sendContent(F(">" LTXT_RECT_TANK "</option><option value='1'"));
   if(cfg.geometry==GEOMETRY_CYLINDER) server.sendContent(F(" selected"));
-  server.sendContent(F(">Zylindertank</option></select>"));
+  server.sendContent(F(">" LTXT_CYL_TANK "</option></select>"));
 
-  server.sendContent(F("<div id='dimLength'><label>Länge mm</label><input id='tankLength' type='number' name='length' min='100' step='1' value='"));
+  server.sendContent(F("<div id='dimLength'><label>" LTXT_LENGTH_MM "</label><input id='tankLength' type='number' name='length' min='100' step='1' value='"));
   webSendSafe(String(cfg.tankLengthMm,0));
   server.sendContent(F("'></div>"));
 
-  server.sendContent(F("<div id='dimWidth'><label>Breite mm</label><input id='tankWidth' type='number' name='width' min='100' step='1' value='"));
+  server.sendContent(F("<div id='dimWidth'><label>" LTXT_WIDTH_MM "</label><input id='tankWidth' type='number' name='width' min='100' step='1' value='"));
   webSendSafe(String(cfg.tankWidthMm,0));
   server.sendContent(F("'></div>"));
 
-  server.sendContent(F("<div id='dimHeight'><label id='tankHeightLabel'>Tankhöhe mm</label><input id='tankHeight' type='number' name='height' min='100' step='1' value='"));
+  server.sendContent(F("<div id='dimHeight'><label id='tankHeightLabel'>" LTXT_HEIGHT_MM "</label><input id='tankHeight' type='number' name='height' min='100' step='1' value='"));
   webSendSafe(String(cfg.tankHeightMm,0));
   server.sendContent(F("'></div>"));
 
-  server.sendContent(F("<div id='dimDiameter'><label>Durchmesser mm</label><input id='tankDiameter' type='number' name='diameter' min='100' step='1' value='"));
+  server.sendContent(F("<div id='dimDiameter'><label>" LTXT_DIAMETER_MM "</label><input id='tankDiameter' type='number' name='diameter' min='100' step='1' value='"));
   webSendSafe(String(cfg.diameterMm,0));
   server.sendContent(F(
     "'></div><div id='tankFormulaHint' class='tankHint'></div>"
     "</div>"
     "<div class='tankPreview'>"
-    "<svg viewBox='0 0 260 220' xmlns='http://www.w3.org/2000/svg' aria-label='Tankvorschau'>"
+    "<svg viewBox='0 0 260 220' xmlns='http://www.w3.org/2000/svg' aria-label='" LTXT_TANK_PREVIEW "'>"
     "<defs>"
     "<linearGradient id='cfgBody' x1='0' x2='0' y1='0' y2='1'><stop offset='0%' stop-color='#dfe6ec'/><stop offset='100%' stop-color='#8996a2'/></linearGradient>"
     "<linearGradient id='cfgOil' x1='0' x2='0' y1='0' y2='1'><stop offset='0%' stop-color='#ffd45c'/><stop offset='100%' stop-color='#c57a00'/></linearGradient>"
@@ -745,29 +763,31 @@ void handleSettings() {
     "<g id='cfgCylShape' style='display:none'><rect x='30' y='56' width='200' height='106' rx='52' fill='url(#cfgBody)' stroke='#52606c' stroke-width='3'/>"
     "<rect x='40' y='66' width='180' height='86' rx='42' fill='#172027'/><path d='M40 109 H220 V152 H40 Z' fill='url(#cfgOil)'/>"
     "<rect x='64' y='164' width='22' height='18' rx='3' fill='#6f7d89'/><rect x='174' y='164' width='22' height='18' rx='3' fill='#6f7d89'/></g>"
-    "<text x='130' y='208' text-anchor='middle' fill='#9fb0bd' font-size='11' id='cfgShapeName'>Quader / Batterietank</text>"
+    "<text x='130' y='208' text-anchor='middle' fill='#9fb0bd' font-size='11' id='cfgShapeName'>" LTXT_RECT_TANK "</text>"
     "</svg>"
-    "<div class='tankCalc'><div class='metric'>Kapazität<b id='cfgCapacity'>-- L</b></div>"
-    "<div class='metric'>Tankfaktor<b id='cfgFactor'>-- L/mm</b></div></div>"
+    "<div class='tankCalc'><div class='metric'>" LTXT_CAPACITY "<b id='cfgCapacity'>-- L</b></div>"
+    "<div class='metric'>" LTXT_TANK_FACTOR "<b id='cfgFactor'>-- L/mm</b></div></div>"
     "</div></div></div>"
   ));
 
+  // Measurement
   server.sendContent(F(
-    "<div class='settingsBlock'><h2>Messung</h2><p>Filter- und Messgrenzen.</p>"
-    "<label>Messintervall ms</label><input type='number' name='interval' value='"
+    "<div class='settingsBlock'><h2>" LTXT_SETTINGS_MEASUREMENT "</h2><p>" LTXT_FILTER_LIMITS "</p>"
+    "<label>" LTXT_MEASUREMENT_INTERVAL "</label><input type='number' name='interval' value='"
   ));
   webSendUInt(cfg.measurementIntervalMs);
-  server.sendContent(F("'><label>Min Abstand mm</label><input type='number' name='minD' value='"));
+  server.sendContent(F("'><label>" LTXT_MIN_DISTANCE_MM "</label><input type='number' name='minD' value='"));
   webSendUInt(cfg.minDistanceMm);
-  server.sendContent(F("'><label>Max Abstand mm</label><input type='number' name='maxD' value='"));
+  server.sendContent(F("'><label>" LTXT_MAX_DISTANCE_MM "</label><input type='number' name='maxD' value='"));
   webSendUInt(cfg.maxDistanceMm);
-  server.sendContent(F("'><label>Max. Sprung mm</label><input type='number' name='jump' value='"));
+  server.sendContent(F("'><label>" LTXT_MAX_JUMP_MM "</label><input type='number' name='jump' value='"));
   webSendUInt(cfg.maxJumpMm);
   server.sendContent(F("'></div>"));
 
+  // Display
   server.sendContent(F(
     "<div class='settingsBlock'><h2>Display</h2><p>Nokia 5110 / PCD8544.</p>"
-    "<label>Kontrast: <b id='displayContrastValue'>"
+    "<label>" LTXT_CONTRAST ": <b id='displayContrastValue'>"
   ));
   webSendUInt(cfg.displayContrast);
   server.sendContent(F("</b></label><input id='displayContrast' name='displayContrast' type='range' min='20' max='100' step='1' value='"));
@@ -776,87 +796,89 @@ void handleSettings() {
 
   server.sendContent(F("<label><input class='inlineCheck' type='checkbox' name='displayAutoRotate'"));
   if(cfg.displayAutoRotate) server.sendContent(F(" checked"));
-  server.sendContent(F(">Seiten automatisch wechseln</label>"));
+  server.sendContent(F(">" LTXT_AUTO_PAGES "</label>"));
 
-  server.sendContent(F("<label>Seiten im Auto-Wechsel</label><div class='checkGrid'>"));
+  server.sendContent(F("<label>" LTXT_AUTO_PAGE_SELECTION "</label><div class='checkGrid'>"));
   server.sendContent(F("<label><input class='inlineCheck' type='checkbox' name='displayAutoPage0'"));
   if(cfg.displayPageMask & 0x01) server.sendContent(F(" checked"));
-  server.sendContent(F(">1 · Füllstand</label>"));
+  server.sendContent(F(">1 · " LTXT_TANK_LEVEL "</label>"));
 
   server.sendContent(F("<label><input class='inlineCheck' type='checkbox' name='displayAutoPage1'"));
   if(cfg.displayPageMask & 0x02) server.sendContent(F(" checked"));
-  server.sendContent(F(">2 · Sensor</label>"));
+  server.sendContent(F(">2 · " LTXT_SENSOR "</label>"));
 
   server.sendContent(F("<label><input class='inlineCheck' type='checkbox' name='displayAutoPage2'"));
   if(cfg.displayPageMask & 0x04) server.sendContent(F(" checked"));
-  server.sendContent(F(">3 · Netzwerk</label>"));
+  server.sendContent(F(">3 · " LTXT_NETWORK "</label>"));
 
   server.sendContent(F("<label><input class='inlineCheck' type='checkbox' name='displayAutoPage3'"));
   if(cfg.displayPageMask & 0x08) server.sendContent(F(" checked"));
-  server.sendContent(F(">4 · System</label>"));
+  server.sendContent(F(">4 · " LTXT_SYSTEM "</label>"));
 
   server.sendContent(F("<label><input class='inlineCheck' type='checkbox' name='displayAutoPage4'"));
   if(cfg.displayPageMask & 0x10) server.sendContent(F(" checked"));
-  server.sendContent(F(">5 · Klima</label></div>"));
+  server.sendContent(F(">5 · " LTXT_CLIMATE "</label></div>"));
 
-  server.sendContent(F("<label>Seitenintervall: <b id='displayPageSecondsValue'>"));
+  server.sendContent(F("<label>" LTXT_PAGE_INTERVAL ": <b id='displayPageSecondsValue'>"));
   webSendUInt(cfg.displayPageSeconds);
   server.sendContent(F(" s</b></label><input id='displayPageSeconds' name='displayPageSeconds' type='range' min='2' max='60' step='1' value='"));
   webSendUInt(cfg.displayPageSeconds);
   server.sendContent(F("' oninput=\"document.getElementById('displayPageSecondsValue').textContent=this.value+' s'\">"));
 
-  server.sendContent(F("<label>Schriftstärke</label><select name='displayFontWeight'><option value='0'"));
+  server.sendContent(F("<label>" LTXT_FONT_WEIGHT "</label><select name='displayFontWeight'><option value='0'"));
   if(cfg.displayFontWeight==0) server.sendContent(F(" selected"));
   server.sendContent(F(">Normal</option><option value='1'"));
   if(cfg.displayFontWeight==1) server.sendContent(F(" selected"));
-  server.sendContent(F(">Fett</option><option value='2'"));
+  server.sendContent(F(">" LTXT_BOLD "</option><option value='2'"));
   if(cfg.displayFontWeight==2) server.sendContent(F(" selected"));
-  server.sendContent(F(">Extra-Fett</option></select>"));
+  server.sendContent(F(">" LTXT_EXTRA_BOLD "</option></select>"));
 
   server.sendContent(F("<label><input class='inlineCheck' type='checkbox' name='displayInvert'"));
   if(cfg.displayInvert) server.sendContent(F(" checked"));
-  server.sendContent(F(">Anzeige invertieren</label>"));
+  server.sendContent(F(">" LTXT_INVERT_DISPLAY "</label>"));
 
   server.sendContent(F(
-    "<label>Displayseite manuell wählen</label>"
+    "<label>" LTXT_SELECT_DISPLAY_PAGE "</label>"
     "<div class='displayPages'>"
-    "<button type='button' class='displayPageBtn' data-page='0'>1 · Füllstand</button>"
-    "<button type='button' class='displayPageBtn' data-page='1'>2 · Sensor</button>"
-    "<button type='button' class='displayPageBtn' data-page='2'>3 · Netzwerk</button>"
-    "<button type='button' class='displayPageBtn' data-page='3'>4 · System</button>"
-    "</div><div id='displayPageStatus' class='displayPageStatus'>Aktuelle Seite: --</div>"
+    "<button type='button' class='displayPageBtn' data-page='0'>1 · " LTXT_TANK_LEVEL "</button>"
+    "<button type='button' class='displayPageBtn' data-page='1'>2 · " LTXT_SENSOR "</button>"
+    "<button type='button' class='displayPageBtn' data-page='2'>3 · " LTXT_NETWORK "</button>"
+    "<button type='button' class='displayPageBtn' data-page='3'>4 · " LTXT_SYSTEM "</button>"
+    "</div><div id='displayPageStatus' class='displayPageStatus'>" LTXT_CURRENT_PAGE "</div>"
     "</div>"
   ));
 
+  // MQTT
   server.sendContent(F(
     "<div class='settingsBlock settingsWide'><h2>MQTT</h2>"
-    "<p>Kompatibilität: <b>average = Liter</b>, <b>fuellhoehe = gefilterter Sensorabstand mm</b>.</p>"
+    LHTML_MQTT_COMPAT
     "<label><input class='inlineCheck' type='checkbox' name='mqtt'"
   ));
   if(cfg.mqttEnabled) server.sendContent(F(" checked"));
-  server.sendContent(F(">MQTT aktiv</label><div class='grid'><div><label>Broker</label><input name='mhost' value='"));
+  server.sendContent(F(">" LTXT_MQTT_ACTIVE "</label><div class='grid'><div><label>Broker</label><input name='mhost' value='"));
   webSendSafe(String(cfg.mqttHost));
   server.sendContent(F("'><label>Port</label><input type='number' name='mport' value='"));
   webSendUInt(cfg.mqttPort);
-  server.sendContent(F("'><label>Benutzer</label><input name='muser' value='"));
+  server.sendContent(F("'><label>" LTXT_USER "</label><input name='muser' value='"));
   webSendSafe(String(cfg.mqttUser));
-  server.sendContent(F("'><label>Passwort</label><input type='password' name='mpass' value='"));
+  server.sendContent(F("'><label>" LTXT_PASSWORD "</label><input type='password' name='mpass' value='"));
   webSendSafe(String(cfg.mqttPass));
-  server.sendContent(F("'></div><div><label>Basis-Topic</label><input name='mbase' value='"));
+  server.sendContent(F("'></div><div><label>" LTXT_BASE_TOPIC "</label><input name='mbase' value='"));
   webSendSafe(String(cfg.mqttBase));
-  server.sendContent(F("'><label>Liter-Topic</label><input name='mavg' value='"));
+  server.sendContent(F("'><label>" LTXT_LITERS_TOPIC "</label><input name='mavg' value='"));
   webSendSafe(String(cfg.mqttAverageTopic));
-  server.sendContent(F("'><label>Fuellhoehe-Topic</label><input name='mheight' value='"));
+  server.sendContent(F(LHTML_FUELLHOEHE_TOPIC));
   webSendSafe(String(cfg.mqttFuellhoeheTopic));
   server.sendContent(F(
     "'></div></div>"
-    "<p class='tankHint'>Home-Assistant-Discovery ist deaktiviert. Die normalen MQTT-Topics bleiben aktiv.</p>"
+    LHTML_HA_DISABLED
     "</div>"
   ));
 
+  // Form sauber schliessen
   server.sendContent(F(
     "<div class='settingsActions'>"
-    "<button type='submit'>Speichern & Neustarten</button>"
+    "<button type='submit'>" LTXT_SAVE_RESTART "</button>"
     "<a class='btn danger' href='/factory-reset' onclick=\"return confirm('Werkseinstellungen wirklich laden?')\">Werkseinstellungen</a>"
     "</div>"
     "</div></form>"
@@ -896,7 +918,7 @@ function updateTankConfigPreview(){
     $('tankFormulaHint').textContent='Quader: Länge × Breite × Höhe.';
   }
 
-  $('cfgCapacity').textContent=Math.round(liters).toLocaleString('de-DE')+' L';
+  $('cfgCapacity').textContent=Math.round(liters).toLocaleString(window.APP_LOCALE||'de-DE')+' L';
   $('cfgFactor').textContent=(H>0?liters/H:0).toFixed(2)+' L/mm';
 }
 
@@ -975,7 +997,6 @@ void handleSave() {
   if (sensorSel > 2) sensorSel = 2;
   cfg.sensorType = (uint8_t)sensorSel;
   cfg.sensorOffsetMm = server.arg("offset").toInt();
-
   cfg.ahtEnabled = server.hasArg("ahtEnabled");
   cfg.ahtTemperatureOffsetC = server.arg("ahtTempOffset").toFloat();
   cfg.ahtHumidityOffsetPercent = server.arg("ahtHumOffset").toFloat();
@@ -1063,7 +1084,7 @@ void handleSave() {
   server.send(
     200,
     "text/html; charset=utf-8",
-    F("<html><body><h1>Gespeichert</h1><p>Neustart...</p></body></html>")
+    F("<html><body><h1>" LTXT_SAVED "</h1><p>" LTXT_RESTARTING "</p></body></html>")
   );
 
   delay(500);
@@ -1346,14 +1367,14 @@ void handleWebOtaPage() {
   server.sendContent(F(
     "<div class='card'><h1>Firmware Update</h1>"
     "<p>ESP8266 Firmware als <b>.bin</b> hochladen.</p>"
-    "<p class='muted'>Während des Uploads Messung, MQTT und Historie nicht bedienen. "
-    "Nach erfolgreichem Update startet das Gerät automatisch neu.</p>"
+    LHTML_OTA_WARNING_START
+    LHTML_OTA_WARNING_END
     "<div class='grid'>"
     "<div class='metric-card'><h3>Firmware</h3><div>"
   ));
   server.sendContent(String(FW_VERSION));
   server.sendContent(F(
-    "</div></div><div class='metric-card'><h3>Freier Sketch-/OTA-Speicher</h3><div>"
+    LHTML_OTA_FREE_CARD
   ));
   server.sendContent(String(ESP.getFreeSketchSpace()/1024UL));
   server.sendContent(F(
@@ -1363,11 +1384,11 @@ void handleWebOtaPage() {
   server.sendContent(F(
     " KB</div></div></div>"
     "<form method='POST' action='/update' enctype='multipart/form-data' "
-    "onsubmit=\"document.getElementById('upbtn').disabled=true;document.getElementById('msg').textContent='Upload läuft …';\">"
+    LHTML_OTA_FORM
     "<input type='file' name='firmware' accept='.bin,application/octet-stream' required>"
     "<button id='upbtn' type='submit'>Firmware hochladen</button></form>"
     "<p id='msg' class='muted'></p>"
-    "<p><a class='btn' href='/systemstatus'>Zurück</a></p></div>"
+    "<p><a class='btn' href='/systemstatus'>" LTXT_BACK "</a></p></div>"
   ));
   webStreamEnd();
 }
@@ -1382,7 +1403,7 @@ void handleWebOtaUpload() {
     webOtaBytes = 0;
     webOtaError = "";
 
-    Serial.print(F("[WEB OTA] Start Datei="));
+    Serial.print(F(LTXT_LOG_OTA_START));
     Serial.println(upload.filename);
     Serial.print(F("[WEB OTA] Heap="));
     Serial.println(ESP.getFreeHeap());
@@ -1394,7 +1415,7 @@ void handleWebOtaUpload() {
     if(!Update.begin(maxSketchSpace)) {
       webOtaError = Update.getErrorString();
       webOtaErrorCount++;
-      Serial.print(F("[WEB OTA] Update.begin FEHLER: "));
+      Serial.print(F(LTXT_LOG_OTA_BEGIN_ERROR));
       Serial.println(webOtaError);
     }
   }
@@ -1407,7 +1428,7 @@ void handleWebOtaUpload() {
     if(written != upload.currentSize) {
       webOtaError = Update.getErrorString();
       webOtaErrorCount++;
-      Serial.print(F("[WEB OTA] Schreibfehler: "));
+      Serial.print(F(LTXT_LOG_OTA_WRITE_ERROR));
       Serial.println(webOtaError);
       return;
     }
@@ -1430,7 +1451,7 @@ void handleWebOtaUpload() {
       } else {
         webOtaError = Update.getErrorString();
         webOtaErrorCount++;
-        Serial.print(F("[WEB OTA] Update.end FEHLER: "));
+        Serial.print(F(LTXT_LOG_OTA_END_ERROR));
         Serial.println(webOtaError);
       }
     }
@@ -1449,15 +1470,15 @@ void handleWebOtaDone() {
     server.send(200, "text/html; charset=utf-8",
       "<!DOCTYPE html><html><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
       "<meta http-equiv='refresh' content='12;url=/'></head><body style='font-family:Arial;background:#111;color:#eee;padding:30px'>"
-      "<h1 style='color:#65e572'>Update erfolgreich</h1>"
-      "<p>Das Gerät startet jetzt neu.</p><p>Die Startseite wird automatisch neu geladen.</p></body></html>");
+      LHTML_OTA_SUCCESS
+      LHTML_OTA_RESTART);
     delay(250);
     ESP.restart();
     return;
   }
 
   String msg = F("Web OTA fehlgeschlagen: ");
-  msg += webOtaError.length() ? webOtaError : F("unbekannter Fehler");
+  msg += webOtaError.length() ? webOtaError : F(LTXT_UNKNOWN_ERROR);
   server.send(500, "text/plain; charset=utf-8", msg);
 }
 
@@ -1487,6 +1508,7 @@ void webMetricCardFloat(const __FlashStringHelper* title,float value,uint8_t dec
   server.sendContent(F("</b></div>"));
 }
 
+
 void webTableRow(const __FlashStringHelper* label,const String& value){
   server.sendContent(F("<tr><td>"));
   server.sendContent(label);
@@ -1505,7 +1527,7 @@ void handleSystemStatusPage() {
 
   server.sendContent(F(
     "<div class='card'><div class='topbar'><h1>System</h1><div class='links'>"
-    "<a class='btn' href='/storage'>Speicher</a>"
+    LHTML_STORAGE_LINK
     "<a class='btn' href='/update'>Web OTA</a>"
     "<a class='btn' href='/api/status'>Status JSON</a>"
     "<a class='btn' href='/api/health'>Health JSON</a>"
@@ -1513,89 +1535,89 @@ void handleSystemStatusPage() {
   ));
 
   webMetricCard(F("Firmware"),String(FW_VERSION));
-  webMetricCard(F("Gerät"),String(F("ESP8266 D1 mini")));
+  webMetricCard(F(LTXT_DEVICE),String(F("ESP8266 D1 mini")));
   webMetricCard(F("Uptime"),String(millis()/1000UL)+F(" s"));
-  webMetricCardFloat(F("Heap frei"),ESP.getFreeHeap()/1024.0f,1,F(" KB"));
-  webMetricCardFloat(F("Heap Minimum"),minFreeHeapSeen/1024.0f,1,F(" KB"));
+  webMetricCardFloat(F(LTXT_FREE_HEAP),ESP.getFreeHeap()/1024.0f,1,F(" KB"));
+  webMetricCardFloat(F(LTXT_MIN_HEAP),minFreeHeapSeen/1024.0f,1,F(" KB"));
   webMetricCard(F("Reset"),String(resetReasonShort()));
   webMetricCard(F("Flash"),String(ESP.getFlashChipRealSize()/1024.0f/1024.0f,1)+F(" MB"));
   webMetricCard(F("Sketch"),String(ESP.getSketchSize()/1024.0f,1)+F(" KB"));
-  webMetricCard(F("Sketch frei / OTA"),String(ESP.getFreeSketchSpace()/1024.0f,1)+F(" KB"));
+  webMetricCard(F(LTXT_SKETCH_FREE_OTA),String(ESP.getFreeSketchSpace()/1024.0f,1)+F(" KB"));
 
   if(fsMounted&&LittleFS.info(fsInfoCache)){
     webMetricCard(F("LittleFS"),
       String(fsInfoCache.totalBytes/1024.0f,1)+F(" / ")+
       String(fsInfoCache.usedBytes/1024.0f,1)+F(" KB"));
   }else{
-    webMetricCardFloat(F("LittleFS Gesamt"),fsInfoCache.totalBytes/1024.0f,1,F(" KB"));
+    webMetricCardFloat(F(LTXT_LITTLEFS_TOTAL),fsInfoCache.totalBytes/1024.0f,1,F(" KB"));
     webMetricCardFloat(F("LittleFS Belegt"),fsInfoCache.usedBytes/1024.0f,1,F(" KB"));
     webMetricCardFloat(F("LittleFS Frei"),(fsInfoCache.totalBytes>fsInfoCache.usedBytes?(fsInfoCache.totalBytes-fsInfoCache.usedBytes):0)/1024.0f,1,F(" KB"));
   }
 
-  webMetricCard(F("WLAN"),
-    WiFi.status()==WL_CONNECTED?String(F("Verbunden")):String(F("Offline")));
+  webMetricCard(F(LTXT_WIFI_LABEL),
+    WiFi.status()==WL_CONNECTED?String(F(LTXT_CONNECTED)):String(F("Offline")));
   webMetricCard(F("MQTT"),
-    mqttClient.connected()?String(F("Verbunden")):String(F("Offline")));
+    mqttClient.connected()?String(F(LTXT_CONNECTED)):String(F("Offline")));
   webMetricCard(F("ToF"),
     String(sensorName(activeSensorType))+
-    (sensorOk?String(F(" / OK")):String(F(" / Fehler"))));
+    (sensorOk?String(F(" / OK")):String(F(" / " LTXT_ERROR))));
   if(!cfg.ahtEnabled){
-    webMetricCard(F("AHT10"),String(F("deaktiviert")));
+    webMetricCard(F("AHT10"),String(F(LTXT_DISABLED)));
   }else if(!ahtOk){
-    webMetricCard(F("AHT10"),String(F("nicht erkannt / "))+String(ahtStatusText()));
+    webMetricCard(F("AHT10"),String(F(LTXT_NOT_DETECTED " / "))+String(ahtStatusText()));
     webMetricCard(F("AHT Diagnose"),
       String(F("0x38 · Retry "))+String(AHT_RETRY_MS/1000UL)+F(" s · Probes ")+String(ahtProbeCount)+
-      F(" · Fehler ")+String(ahtErrorCount));
+      F(LTXT_ERROR_DOT)+String(ahtErrorCount));
   }else{
     webMetricCard(F("AHT10"),String(F("OK @ 0x38")));
-    webMetricCard(F("Temperatur"),String(ahtTemperatureC,1)+F(" °C"));
-    webMetricCard(F("Luftfeuchte"),String(ahtHumidityPercent,1)+F(" %"));
-    webMetricCard(F("Taupunkt"),String(ahtDewPointC,1)+F(" °C"));
-    webMetricCard(F("Kondensationsreserve"),String(ahtCondensationReserveC,1)+F(" °C"));
-    webMetricCard(F("AHT Status"),String(ahtStatusText()));
+    webMetricCard(F(LTXT_TEMPERATURE),String(ahtTemperatureC,1)+F(" °C"));
+    webMetricCard(F(LTXT_HUMIDITY),String(ahtHumidityPercent,1)+F(" %"));
+    webMetricCard(F(LTXT_DEW_POINT),String(ahtDewPointC,1)+F(" °C"));
+    webMetricCard(F(LTXT_CONDENSATION_MARGIN),String(ahtCondensationReserveC,1)+F(" °C"));
+    webMetricCard(F(LTXT_AHT_STATUS),String(ahtStatusText()));
     webMetricCard(F("AHT Intervall"),String(cfg.ahtIntervalMs/1000UL)+F(" s"));
     webMetricCard(F("AHT Temp Offset"),String(cfg.ahtTemperatureOffsetC,1)+F(" °C"));
     webMetricCard(F("AHT RH Offset"),String(cfg.ahtHumidityOffsetPercent,1)+F(" %"));
     webMetricCard(F("AHT Alter"),lastAhtValidMs?String((millis()-lastAhtValidMs)/1000UL)+F(" s"):String(F("--")));
-    webMetricCard(F("AHT Fehler"),String(ahtErrorCount));
+    webMetricCard(F(LTXT_AHT_ERRORS),String(ahtErrorCount));
     webMetricCard(F("AHT Recoveries"),String(ahtRecoveryCount));
   }
-  webMetricCardUInt(F("Historie"),historyHeader.count,F(" Tage"));
+  webMetricCardUInt(F(LTXT_HISTORY),historyHeader.count,F(LTXT_LOG_DAYS_SUFFIX));
   webMetricCardUInt(F("History Recordgröße"),sizeof(DailyHistoryRecord),F(" B/Tag"));
-  webMetricCardUInt(F("History Duplikate"),historyRepairDuplicates);
-  webMetricCardUInt(F("History CRC/invalid"),historyRepairInvalid);
-  webMetricCard(F("History repariert"),historyRepairPerformed?String(F("JA")):String(F("NEIN")));
+  webMetricCardUInt(F(LTXT_HISTORY_DUPLICATES),historyRepairDuplicates);
+  webMetricCardUInt(F(LTXT_HISTORY_INVALID),historyRepairInvalid);
+  webMetricCard(F(LTXT_HISTORY_REPAIRED),historyRepairPerformed?String(F(LTXT_YES)):String(F(LTXT_NO)));
   webMetricCard(F("OTA"),String(F("Web OTA bereit")));
-  webMetricCardUInt(F("WLAN-Reconnects"),wifiReconnectCount);
-  webMetricCard(F("Messungen / Fehler"),
+  webMetricCardUInt(F(LTXT_WIFI_RECONNECTS),wifiReconnectCount);
+  webMetricCard(F(LTXT_MEASUREMENTS_ERRORS),
     String(measurementCount)+F(" / ")+String(measurementErrors));
   webMetricCard(F("History API"),
     String(historyApiRequests)+F(" Aufrufe / ")+
-    String(historyApiErrors)+F(" Fehler"));
-  webMetricCard(F("History API zuletzt"),
+    String(historyApiErrors)+F(LTXT_ERROR_COUNT_SUFFIX));
+  webMetricCard(F(LTXT_HISTORY_API_LAST),
     String(historyApiLastItems)+F(" Punkte / ")+
     String(historyApiLastMs)+F(" ms"));
-  webMetricCardUInt(F("Nachfüllschwelle"),HISTORY_REFILL_MIN_LITERS,F(" L"));
-  webMetricCardFloat(F("Max Block frei"),ESP.getMaxFreeBlockSize()/1024.0f,1,F(" KB"));
-  webMetricCardFloat(F("Max Block Minimum"),(lowestMaxBlockSeen?lowestMaxBlockSeen:ESP.getMaxFreeBlockSize())/1024.0f,1,F(" KB"));
-  webMetricCardUInt(F("Heap Fragmentierung"),ESP.getHeapFragmentation(),F(" %"));
-  webMetricCard(F("Fragmentierung Maximum"),
+  webMetricCardUInt(F(LTXT_REFILL_THRESHOLD),HISTORY_REFILL_MIN_LITERS,F(" L"));
+  webMetricCardFloat(F(LTXT_MAX_BLOCK_FREE),ESP.getMaxFreeBlockSize()/1024.0f,1,F(" KB"));
+  webMetricCardFloat(F(LTXT_MAX_BLOCK_MIN),(lowestMaxBlockSeen?lowestMaxBlockSeen:ESP.getMaxFreeBlockSize())/1024.0f,1,F(" KB"));
+  webMetricCardUInt(F(LTXT_FRAGMENTATION),ESP.getHeapFragmentation(),F(" %"));
+  webMetricCard(F(LTXT_MAX_FRAGMENTATION),
     String(highestHeapFragSeen)+F(" %"));
-  webMetricCard(F("Web Requests"),String(webRequestCount));
-  webMetricCard(F("Low-Heap Events"),String(webLowHeapEvents));
-  webMetricCard(F("Web OTA Versuche"),String(webOtaAttempts));
-  webMetricCard(F("Web OTA OK / Fehler"),
+  webMetricCard(F(LTXT_WEB_REQUESTS),String(webRequestCount));
+  webMetricCard(F(LTXT_LOW_HEAP_EVENTS),String(webLowHeapEvents));
+  webMetricCard(F(LTXT_OTA_ATTEMPTS),String(webOtaAttempts));
+  webMetricCard(F(LTXT_WEB_OTA_OK_ERROR),
     String(webOtaSuccessCount)+F(" / ")+String(webOtaErrorCount));
 
-  webMetricCard(F("Display Auto"),
-    cfg.displayAutoRotate?String(F("AN")):String(F("AUS")));
-  webMetricCard(F("Display Intervall"),
+  webMetricCard(F(LTXT_DISPLAY_AUTO),
+    cfg.displayAutoRotate?String(F(LTXT_ON)):String(F(LTXT_OFF)));
+  webMetricCard(F(LTXT_DISPLAY_INTERVAL),
     String(cfg.displayPageSeconds)+F(" s"));
-  webMetricCard(F("Display invertiert"),
-    cfg.displayInvert?String(F("AN")):String(F("AUS")));
-  webMetricCard(F("Display Schrift"),
+  webMetricCard(F(LTXT_DISPLAY_INVERTED),
+    cfg.displayInvert?String(F(LTXT_ON)):String(F(LTXT_OFF)));
+  webMetricCard(F(LTXT_DISPLAY_FONT),
     cfg.displayFontWeight==0?String(F("Normal")):
-    (cfg.displayFontWeight==1?String(F("Fett")):String(F("Extra-Fett"))));
+    (cfg.displayFontWeight==1?String(F(LTXT_BOLD)):String(F(LTXT_EXTRA_BOLD))));
 
   server.sendContent(F("</div></div>"));
   webStreamEnd();
@@ -1618,7 +1640,7 @@ uint32_t storageRemoveKnownTempFile(const char* path){
   }
 
   if(LittleFS.remove(path)){
-    Serial.print(F("[STORAGE CLEAN] geloescht "));
+    Serial.print(F(LTXT_STORAGE_CLEAN_DELETED));
     Serial.print(path);
     Serial.print(F(" "));
     Serial.print(size);
@@ -1626,17 +1648,20 @@ uint32_t storageRemoveKnownTempFile(const char* path){
     return size;
   }
 
-  Serial.print(F("[STORAGE CLEAN] FEHLER "));
+  Serial.print(F(LTXT_STORAGE_CLEAN_ERROR));
   Serial.println(path);
   return 0;
 }
 
 void handleStorageCleanupTemp(){
   if(!fsMounted){
-    server.send(503,"text/plain; charset=utf-8","LittleFS nicht verfuegbar");
+    server.send(503,"text/plain; charset=utf-8",LTXT_LITTLEFS_UNAVAILABLE_ASCII);
     return;
   }
 
+  // Only files that can be regenerated from interrupted/completed
+  // maintenance and import operations.
+  // /history.bin and /history_import.csv are intentionally NEVER deleted.
   static const char* disposableFiles[]={
     HISTORY_IMPORT_PREVIEW_FILE,
     HISTORY_IMPORT_INDEX_FILE,
@@ -1667,7 +1692,7 @@ void handleStorageCleanupTemp(){
   }
 
   if(LittleFS.info(fsInfoCache)){
-    Serial.print(F("[STORAGE CLEAN] fertig files="));
+    Serial.print(F(LTXT_STORAGE_CLEAN_DONE));
     Serial.print(removed);
     Serial.print(F(" reclaimed="));
     Serial.print(reclaimed);
@@ -1680,12 +1705,12 @@ void handleStorageCleanupTemp(){
   html.reserve(480);
   html+=F("<!doctype html><html><head><meta charset='utf-8'>"
           "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-          "<title>Speicher aufgeräumt</title></head><body style='font-family:Arial;background:#111;color:#eee;padding:24px'>"
-          "<h1>LittleFS aufgeräumt</h1><p>Gelöschte Temp-/Backup-Dateien: <b>");
+          LHTML_STORAGE_CLEAN_TITLE
+          LHTML_STORAGE_CLEAN_H1);
   html+=String(removed);
   html+=F("</b></p><p>Freigegeben: <b>");
   html+=String(reclaimed/1024.0f,1);
-  html+=F(" KB</b></p><p><a style='color:#69a7ff' href='/storage'>Zurück zu Speicher</a></p></body></html>");
+  html+=F(LHTML_STORAGE_BACK);
   server.send(200,"text/html; charset=utf-8",html);
 }
 
@@ -1694,11 +1719,11 @@ void handleStorageStatus() {
   Serial.print(F("[WEB] /storage heap before="));
   Serial.println(heapBefore);
 
-  webStreamBegin(F("Speicher"));
+  webStreamBegin(F(LTXT_STORAGE));
   webStreamNav(3);
 
   server.sendContent(F(
-    "<div class='card'><div class='topbar'><h1>Speicher & Historienplanung</h1>"
+    LHTML_STORAGE_TOP
     "<div class='links'><a class='btn' href='/systemstatus'>System</a></div>"
     "</div><table>"
   ));
@@ -1707,32 +1732,32 @@ void handleStorageStatus() {
   webTableRow(F("Sketch"),String(ESP.getSketchSize())+F(" B"));
   webTableRow(F("FreeSketchSpace"),String(ESP.getFreeSketchSpace())+F(" B"));
   webTableRow(F("LittleFS"),
-    fsMounted?String(F("gemountet")):String(F("nicht verfügbar")));
+    fsMounted?String(F("gemountet")):String(F(LTXT_NOT_AVAILABLE)));
 
   uint32_t freeB=0;
   if(fsMounted&&LittleFS.info(fsInfoCache)){
     freeB=fsInfoCache.totalBytes>fsInfoCache.usedBytes
       ?fsInfoCache.totalBytes-fsInfoCache.usedBytes:0;
 
-    webTableRow(F("LittleFS gesamt"),
+    webTableRow(F(LTXT_LITTLEFS_TOTAL_LOWER),
       String(fsInfoCache.totalBytes)+F(" B"));
-    webTableRow(F("LittleFS benutzt"),
+    webTableRow(F(LTXT_LITTLEFS_USED),
       String(fsInfoCache.usedBytes)+F(" B"));
     webTableRow(F("LittleFS frei"),
       String(freeB)+F(" B"));
     webTableRow(F("History Record"),
       String(sizeof(DailyHistoryRecord))+F(" B"));
-    webTableRow(F("History Einträge"),
+    webTableRow(F(LTXT_HISTORY_ENTRIES),
       String(historyHeader.count));
     webTableRow(F("History Kapazität"),
-      String(historyHeader.capacity)+F(" Tage"));
+      String(historyHeader.capacity)+F(LTXT_LOG_DAYS_SUFFIX));
   }
 
   server.sendContent(F("</table></div>"));
 
   if(freeB>0){
     server.sendContent(F(
-      "<div class='card'><h2>Mögliche Tageshistorie</h2><table>"
+      LHTML_HISTORY_CAPACITY_CARD
     ));
 
     const uint8_t sizes[]={16,20,24,32};
@@ -1740,8 +1765,8 @@ void handleStorageStatus() {
       const uint32_t recs=freeB/sizes[i];
       String label=String(sizes[i])+F(" Byte/Tag");
       if(sizes[i]==sizeof(DailyHistoryRecord))label+=F(" (aktuell)");
-      String value=String(recs)+F(" Tage / ca. ")+
-                   String((float)recs/365.25f,1)+F(" Jahre");
+      String value=String(recs)+F(LTXT_STORAGE_DAYS_APPROX)+
+                   String((float)recs/365.25f,1)+F(LTXT_STORAGE_YEARS);
 
       if(sizes[i]==sizeof(DailyHistoryRecord)){
         server.sendContent(F("<tr style='font-weight:700;color:#65e572'><td>"));
@@ -1761,16 +1786,16 @@ void handleStorageStatus() {
     ));
     server.sendContent(String(sizeof(DailyHistoryRecord)));
     server.sendContent(F(
-      " Byte pro Tag (History V3 mit Klima). Für LittleFS wird zusätzlich Reserve für Konfiguration, "
-      "Import und temporäre Dateien benötigt.</p></div>"
+      LTXT_STORAGE_BYTES_PER_DAY
+      LHTML_STORAGE_IMPORT_TEMP_END
     ));
   }
 
   if(fsMounted){
     server.sendContent(F(
-      "<div class='card'><h2>LittleFS-Dateien</h2>"
-      "<p class='muted'>Damit ist direkt sichtbar, welche Datei den Flash belegt.</p>"
-      "<div style='overflow-x:auto'><table><tr><th>Datei</th><th>Größe</th><th>Anteil</th></tr>"
+      LHTML_LITTLEFS_FILES
+      LHTML_FILES_HINT
+      LHTML_FILES_TABLE
     ));
 
     Dir dir=LittleFS.openDir("/");
@@ -1798,23 +1823,23 @@ void handleStorageStatus() {
 
     server.sendContent(F("</table></div><p class='muted'>"));
     webSendSafe(String(fileCount));
-    server.sendContent(F(" Dateien aufgelistet · Dateisumme "));
+    server.sendContent(F(LTXT_FILES_LISTED));
     webSendSafe(String(listedBytes/1024.0f,1));
-    server.sendContent(F(" KB. Die LittleFS-Belegung kann zusätzlich Dateisystem-Overhead enthalten.</p>"));
+    server.sendContent(F(LTXT_FS_OVERHEAD));
 
     server.sendContent(F(
       "<div class='topbar' style='margin-top:14px;gap:10px;flex-wrap:wrap'>"
       "<form method='POST' action='/storage/cleanup-temp' "
-      "onsubmit=\"return confirm('Bekannte Temp-, Index- und Backup-Dateien löschen? Die aktive History und die hochgeladene Importdatei bleiben erhalten.');\">"
-      "<button type='submit'>Temp-/Backup-Dateien aufräumen</button></form>"
+      LHTML_STORAGE_CLEAN_CONFIRM
+      LHTML_STORAGE_CLEAN_BUTTON
       "<form method='POST' action='/history/maintenance/compact' "
       "onsubmit=\"return confirm('History kompakt neu schreiben und direkt aufeinanderfolgende Duplikate entfernen?');\">"
       "<button type='submit'>History kompakt neu schreiben</button></form>"
-      "<a class='btn' href='/history/maintenance'>History-Wartung</a>"
+      LHTML_HISTORY_MAINT_LINK
       "</div>"
       "<p class='muted' style='margin-top:12px'>"
       "Der Aufräum-Button löscht niemals <code>/history.bin</code> und niemals <code>/history_import.csv</code>. "
-      "Entfernt werden nur bekannte temporäre Index-, Repair-, Filter- und Compact-Dateien.</p>"
+      LTXT_STORAGE_CLEAN_NOTE
       "</div>"
     ));
   }
@@ -1835,8 +1860,8 @@ void handleFactoryReset() {
   server.send(
     200,
     "text/html; charset=utf-8",
-    F("<html><body><h1>Werkseinstellungen geladen</h1>"
-      "<p>Das Geraet startet neu.</p></body></html>")
+    F(LHTML_FACTORY_LOADED
+      LHTML_DEVICE_RESTART)
   );
 
   delay(500);
@@ -1863,11 +1888,11 @@ void handleDisplayPageApi() {
   Serial.print(displayPage+1);
   Serial.print(F("/5 "));
   switch(displayPage){
-    case 0: Serial.println(F("Fuellstand")); break;
+    case 0: Serial.println(F(LTXT_DISPLAY_LEVEL_ASCII)); break;
     case 1: Serial.println(F("Sensor")); break;
     case 2: Serial.println(F("Netzwerk")); break;
     case 3: Serial.println(F("System")); break;
-    default: Serial.println(F("Klima")); break;
+    default: Serial.println(F(LTXT_CLIMATE)); break;
   }
 
   String s=F("{\"ok\":true,\"page\":");
@@ -1934,12 +1959,11 @@ void setupWeb() {
   Serial.println(F("[WEB] Safe-Chunk fuer leere Konfigurationswerte aktiv"));
   Serial.println(F("[WEB] HTTP KeepAlive AUS / Connection close aktiv"));
   Serial.println(F("[RAM] String-Free History/CSV/Web Helfer aktiv"));
-  Serial.println(F("[UI] Klima in Dashboard-/Historiegrafik integriert"));
+  Serial.println(F(LTXT_UI_CLIMATE_INTEGRATED));
   Serial.println(F("[FIX] History JS Loader + Tooltip wiederhergestellt"));
-  Serial.println(F("[SYSTEM] LittleFS Gesamt/Belegt/Frei + beruhigte Heap-Diagnose"));
-  Serial.println(F("[UI] Dashboard/Historie kompakt + Klima-Schalter dynamisch"));
+  Serial.println(F(LTXT_SYSTEM_FS_DIAG));
+  Serial.println(F(LTXT_UI_DASH_HISTORY_COMPACT));
   Serial.println(F("[FIX] Web-Number-Helper Prototypen vor History API"));
   Serial.println(F("[HA] Discovery ENTFERNT - MQTT Topics bleiben aktiv"));
   Serial.print(F("[MQTT] Buffer="));Serial.println(MQTT_BUFFER_NORMAL);
 }
-
