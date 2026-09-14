@@ -997,6 +997,7 @@ void handleSave() {
   if (sensorSel > 2) sensorSel = 2;
   cfg.sensorType = (uint8_t)sensorSel;
   cfg.sensorOffsetMm = server.arg("offset").toInt();
+
   cfg.ahtEnabled = server.hasArg("ahtEnabled");
   cfg.ahtTemperatureOffsetC = server.arg("ahtTempOffset").toFloat();
   cfg.ahtHumidityOffsetPercent = server.arg("ahtHumOffset").toFloat();
@@ -1967,3 +1968,4 @@ void setupWeb() {
   Serial.println(F("[HA] Discovery ENTFERNT - MQTT Topics bleiben aktiv"));
   Serial.print(F("[MQTT] Buffer="));Serial.println(MQTT_BUFFER_NORMAL);
 }
+
