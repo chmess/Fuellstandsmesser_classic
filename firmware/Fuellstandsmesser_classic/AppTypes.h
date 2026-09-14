@@ -2,7 +2,7 @@
 #include <Arduino.h>
 
 // Shared data types used by real .cpp modules.
-// Extracted unchanged from Fuellstandsmesser_classic V0.12.0.
+// Extracted unchanged from Fuellstandsmesser_classic V0.12.3.
 
 struct Config {
   uint32_t magic;
