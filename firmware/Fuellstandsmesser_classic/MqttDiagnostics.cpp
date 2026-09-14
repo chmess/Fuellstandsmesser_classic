@@ -71,7 +71,7 @@ void publishMqtt() {
     const int n=snprintf(topic,sizeof(topic),"%s/%s",cfg.mqttBase,suffix);
     if(n<=0 || (size_t)n>=sizeof(topic)){
       mqttPublishErrors++;
-      Serial.print(F("[MQTT] Topic zu lang: "));
+      Serial.print(TR("[MQTT] Topic zu lang: ","[MQTT] topic too long: "));
       Serial.println(suffix);
       return false;
     }
@@ -80,7 +80,7 @@ void publishMqtt() {
     return ok;
   };
 
-  // Fuellstandsmesser3-Kompatibilitaet unveraendert.
+  // Fuellstandsmesser3 compatibility remains unchanged.
   dtostrf(tankLiters,0,1,buf);
   const bool okAverage=mqttClient.publish(cfg.mqttAverageTopic,buf,true);
   if(okAverage)mqttPublishCount++;else mqttPublishErrors++;
@@ -89,7 +89,7 @@ void publishMqtt() {
   Serial.print(cfg.mqttAverageTopic);
   Serial.print(F(" = "));
   Serial.print(buf);
-  Serial.println(okAverage?F(" OK"):F(" FEHLER"));
+  Serial.println(okAverage?F(" OK"):TR(LTXT_LOG_ERROR_SUFFIX," ERROR"));
 
   dtostrf(filteredDistanceMm,0,1,buf);
   const bool okFuellhoehe=mqttClient.publish(cfg.mqttFuellhoeheTopic,buf,true);
@@ -99,7 +99,7 @@ void publishMqtt() {
   Serial.print(cfg.mqttFuellhoeheTopic);
   Serial.print(F(" = "));
   Serial.print(buf);
-  Serial.println(okFuellhoehe?F(" OK"):F(" FEHLER"));
+  Serial.println(okFuellhoehe?F(" OK"):TR(LTXT_LOG_ERROR_SUFFIX," ERROR"));
 
   if(isfinite(tankPercent)){
     dtostrf(tankPercent,0,1,buf);
@@ -123,7 +123,7 @@ void publishMqtt() {
 
   publishBase("sensor",sensorName(activeSensorType));
 
-  // History-Statistikcache verhindert wiederholtes komplettes Einlesen.
+  // History statistics cache avoids repeated full-file reads.
   const float cToday=historyConsumptionDays(1);
   const float c7=historyConsumptionDays(7);
   const float c30=historyConsumptionDays(30);
@@ -159,9 +159,9 @@ void publishMqtt() {
     publishBase("condensation_reserve_c",buf);
   }
 
-  Serial.print(F("[MQTT] publish gesamt OK="));
+  Serial.print(F(LTXT_LOG_MQTT_PUBLISH_TOTAL));
   Serial.print(mqttPublishCount);
-  Serial.print(F(" Fehler="));
+  Serial.print(TR(LTXT_LOG_ERRORS_SUFFIX," errors="));
   Serial.println(mqttPublishErrors);
 }
 
@@ -186,7 +186,7 @@ bool mqttResolveBroker(IPAddress& ip){
   Serial.print(F("[MQTT DIAG] DNS host="));
   Serial.print(cfg.mqttHost);
   Serial.print(F(" result="));
-  Serial.print(ok==1?F("OK"):F("FEHLER"));
+  Serial.print(ok==1?F("OK"):TR("FEHLER","ERROR"));
   Serial.print(F(" time="));
   Serial.print(dt);
   Serial.print(F(" ms"));
@@ -216,7 +216,7 @@ bool mqttTcpProbe(const IPAddress& ip){
   Serial.print(':');
   Serial.print(cfg.mqttPort);
   Serial.print(F(" -> "));
-  Serial.print(ok?F("OK"):F("FEHLER"));
+  Serial.print(ok?F("OK"):TR("FEHLER","ERROR"));
   Serial.print(F(" time="));
   Serial.print(dt);
   Serial.println(F(" ms"));
@@ -227,22 +227,22 @@ bool mqttTcpProbe(const IPAddress& ip){
 }
 
 void mqttPrintStatus(){
-  Serial.println(F("[MQTT STATUS]"));
-  Serial.print(F("  aktiviert   : "));
-  Serial.println(cfg.mqttEnabled?F("JA"):F("NEIN"));
+  Serial.println(TR("[MQTT STATUS]","[MQTT STATUS]"));
+  Serial.print(TR("  aktiviert   : ","  enabled     : "));
+  Serial.println(cfg.mqttEnabled?F("JA"):TR("NEIN","NO"));
   Serial.print(F("  broker      : "));
   Serial.print(cfg.mqttHost);
   Serial.print(':');
   Serial.println(cfg.mqttPort);
-  Serial.print(F("  verbunden   : "));
-  Serial.println(mqttClient.connected()?F("JA"):F("NEIN"));
+  Serial.print(TR("  verbunden   : ","  connected   : "));
+  Serial.println(mqttClient.connected()?F("JA"):TR("NEIN","NO"));
   Serial.print(F("  state       : "));
   Serial.println(mqttClient.state());
   Serial.print(F("  DNS zuletzt : "));
   if(mqttLastDnsOk)Serial.println(mqttLastResolvedIp);
-  else Serial.println(F("FEHLER / nicht getestet"));
+  else Serial.println(TR("FEHLER / nicht getestet","ERROR / not tested"));
   Serial.print(F("  TCP zuletzt : "));
-  Serial.println(mqttLastTcpOk?F("OK"):F("FEHLER / nicht getestet"));
+  Serial.println(mqttLastTcpOk?F("OK"):TR("FEHLER / nicht getestet","ERROR / not tested"));
   Serial.print(F("  connect OK  : "));
   Serial.println(mqttConnectCount);
   Serial.print(F("  connect Err : "));
@@ -259,7 +259,7 @@ void mqttDiagnosticTest(){
   Serial.println(F("[MQTT DIAG] Test Start"));
 
   if(WiFi.status()!=WL_CONNECTED){
-    Serial.println(F("[MQTT DIAG] WLAN nicht verbunden"));
+    Serial.println(TR("[MQTT DIAG] WLAN nicht verbunden","[MQTT DIAG] Wi-Fi not connected"));
     return;
   }
 
@@ -272,7 +272,7 @@ void mqttDiagnosticTest(){
 
   IPAddress ip;
   if(!mqttResolveBroker(ip)){
-    Serial.println(F("[MQTT DIAG] Abbruch: Brokername nicht aufloesbar"));
+    Serial.println(TR("[MQTT DIAG] Abbruch: Brokername nicht aufloesbar","[MQTT DIAG] Abort: broker name cannot be resolved"));
     return;
   }
 
@@ -293,7 +293,7 @@ bool connectMqtt() {
     mqttLastConnectDurationMs=millis()-t0;
     mqttRetryIntervalMs=min<uint32_t>(MQTT_RETRY_MAX_MS,mqttRetryIntervalMs*2UL);
 
-    Serial.print(F("[MQTT] DNS FEHLER host="));
+    Serial.print(F(LTXT_LOG_MQTT_DNS_ERROR));
     Serial.print(cfg.mqttHost);
     Serial.print(F(" nextRetry="));
     Serial.print(mqttRetryIntervalMs/1000UL);
@@ -306,7 +306,7 @@ bool connectMqtt() {
     mqttLastConnectDurationMs=millis()-t0;
     mqttRetryIntervalMs=min<uint32_t>(MQTT_RETRY_MAX_MS,mqttRetryIntervalMs*2UL);
 
-    Serial.print(F("[MQTT] TCP FEHLER Broker="));
+    Serial.print(F(LTXT_LOG_MQTT_TCP_ERROR));
     Serial.print(cfg.mqttHost);
     Serial.print(':');
     Serial.print(cfg.mqttPort);
@@ -318,7 +318,7 @@ bool connectMqtt() {
 
   mqttClient.setServer(brokerIp, cfg.mqttPort);
 
-  String clientId = "Fuellstandsmesser_classic-";
+  String clientId = "FuellstandClassic-";
   clientId += String(ESP.getChipId(), HEX);
 
   String statusTopic = String(cfg.mqttBase) + "/status";
@@ -351,7 +351,7 @@ bool connectMqtt() {
     mqttRetryIntervalMs=MQTT_RETRY_MS;
     mqttClient.publish(statusTopic.c_str(), "online", true);
 
-    Serial.print(F("[MQTT] verbunden Broker="));
+    Serial.print(TR("[MQTT] verbunden Broker=","[MQTT] connected Broker="));
     Serial.print(cfg.mqttHost);
     Serial.print(F(" -> "));
     Serial.print(brokerIp);
@@ -375,7 +375,7 @@ bool connectMqtt() {
     mqttConnectErrors++;
     mqttRetryIntervalMs=min<uint32_t>(MQTT_RETRY_MAX_MS,mqttRetryIntervalMs*2UL);
 
-    Serial.print(F("[MQTT] Protokoll FEHLER rc="));
+    Serial.print(F(LTXT_LOG_MQTT_PROTOCOL_ERROR));
     Serial.print(mqttClient.state());
     Serial.print(F(" connectOK="));
     Serial.print(mqttConnectCount);
@@ -474,35 +474,37 @@ void printStorageDiagnostics() {
     Serial.print(freeB);
     Serial.println(F(" B"));
 
-    Serial.print(F("[STORAGE] Tagesrecords bei 16B="));
+    // Pure capacity estimate for later daily history.
+    // 16/20/24 bytes show the possible order of magnitude.
+    Serial.print(F(LTXT_LOG_STORAGE_DAILY_16));
     Serial.print(freeB / 16UL);
     Serial.print(F(" (~"));
     Serial.print((freeB / 16UL) / 365UL);
-    Serial.println(F(" Jahre)"));
+    Serial.println(TR(" Jahre)"," years)"));
 
-    Serial.print(F("[STORAGE] Tagesrecords bei 20B="));
+    Serial.print(F(LTXT_LOG_STORAGE_DAILY_20));
     Serial.print(freeB / 20UL);
     Serial.print(F(" (~"));
     Serial.print((freeB / 20UL) / 365UL);
-    Serial.println(F(" Jahre)"));
+    Serial.println(TR(" Jahre)"," years)"));
 
-    Serial.print(F("[STORAGE] Tagesrecords bei 24B="));
+    Serial.print(F(LTXT_LOG_STORAGE_DAILY_24));
     Serial.print(freeB / 24UL);
     Serial.print(F(" (~"));
     Serial.print((freeB / 24UL) / 365UL);
-    Serial.println(F(" Jahre)"));
+    Serial.println(TR(" Jahre)"," years)"));
   } else {
-    Serial.println(F("[STORAGE] LittleFS nicht verfuegbar/gemountet"));
+    Serial.println(TR("[STORAGE] LittleFS nicht verfuegbar/gemountet","[STORAGE] LittleFS unavailable/not mounted"));
   }
 
   if(fsInfoCache.totalBytes>HISTORY_RESERVE_BYTES){
     const uint32_t usable=fsInfoCache.totalBytes-HISTORY_RESERVE_BYTES;
     const uint32_t r32=usable/32UL;
-    Serial.print(F("[STORAGE] Tagesrecords bei 32B="));
+    Serial.print(F(LTXT_LOG_STORAGE_DAILY_32));
     Serial.print(r32);
     Serial.print(F(" (~"));
     Serial.print((float)r32/365.25f,0);
-    Serial.println(F(" Jahre)"));
+    Serial.println(TR(" Jahre)"," years)"));
   }
   Serial.println(F("[STORAGE] ------------------------------"));
 }
