@@ -240,3 +240,4 @@ uint8_t pendingJumpCount = 0;
 float startupCandidateDistance = NAN;
 uint8_t startupCandidateCount = 0;
 bool startupMeasurementStable = false;
+
