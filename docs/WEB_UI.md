@@ -1,96 +1,33 @@
-# Weboberfläche
+# Weboberfläche / Web UI
 
-## Dashboard
+## Deutsch
+### Dashboard
+Füllstand Liter/Prozent, Füllhöhe, ToF-Abstand, Tankfaktor, RSSI, Verbrauch, WLAN/MQTT/ToF-Status, Diagramm und optional AHT10-Klima.
 
-Das Dashboard zeigt:
+### Historie
+Langzeitverlauf, Verbrauch, Nachfüll-/Quellenmarker, Monatsvergleich, Statistik, letzte Nachfüllungen, CSV Import/Export, Wartung und Testdaten.
 
-- Füllstand in Liter und Prozent
-- Füllhöhe
-- ToF-Sensorabstand
-- Tankfaktor
-- RSSI
-- Verbrauch
-- WLAN/MQTT/ToF-Status
-- Füllstands-/Verbrauchsgrafik
-- optional AHT10-Klima
+### Einstellungen
+WLAN, ToF-Sensortyp, AHT10, Tankgeometrie, Kalibrierung, Messfilter, Display und MQTT.
 
-![Dashboard](images/dashboard.webp)
+### System
+Firmware/Gerät, Uptime, Heap, Reset-Ursache, Flash/LittleFS, WLAN/MQTT, ToF/AHT10, History, APIs, Fragmentierung, Web-Requests, Web OTA und Displaystatus.
 
-## Historie
+Die UI-Sprache wird in `Language.h` beim Kompilieren ausgewählt. API-Pfade und maschinenlesbare Feldnamen bleiben unverändert.
 
-- Langzeit-Füllstandsverlauf
-- Verbrauch
-- Nachfüllmarker
-- Quellenmarker
-- Monatsvergleich
-- Statistik
-- letzte Nachfüllungen
-- CSV Import / Export
-- Wartung und Testdaten
+Wichtige Endpunkte: `/`, `/settings`, `/systemstatus`, `/update`, `/history`, `/api/status`, `/api/health`, `/api/history`, `/api/history/climate`, `/api/monthly-comparison`, `/api/recent-refills`, `/history.csv`, `/history/import`, `/history/maintenance`, `/reboot`.
 
-![Historie](images/history.webp)
+## English
+### Dashboard
+Level in liters/percent, liquid height, ToF distance, tank factor, RSSI, consumption, Wi-Fi/MQTT/ToF state, chart and optional AHT10 climate.
 
-## Einstellungen
+### History
+Long-term history, consumption, refill/source markers, monthly comparison, statistics, recent refills, CSV import/export, maintenance and test data.
 
-- WLAN
-- ToF-Sensortyp
-- AHT10
-- Tankgeometrie
-- Kalibrierung
-- Messfilter
-- Display
-- MQTT
+### Settings
+Wi-Fi, ToF sensor type, AHT10, tank geometry, calibration, measurement filter, display and MQTT.
 
-![Einstellungen](images/settings.webp)
+### System
+Firmware/device, uptime, heap, reset reason, flash/LittleFS, Wi-Fi/MQTT, ToF/AHT10, history, APIs, fragmentation, web requests, Web OTA and display state.
 
-## System
-
-- Firmware / Gerät
-- Uptime
-- Heap frei / Minimum
-- Reset-Ursache
-- Flash / LittleFS
-- WLAN / MQTT
-- ToF / AHT10
-- History-Zustand
-- History API
-- Heap-Fragmentierung
-- Web-Requests
-- Web OTA
-- Displaystatus
-
-![System](images/system.webp)
-
-## HTTP-Endpunkte
-
-Auszug aus der aktuellen Firmware:
-
-```text
-GET  /
-GET  /settings
-POST /save
-GET  /systemstatus
-GET  /update
-POST /update
-GET  /history
-GET  /api/status
-GET  /api/health
-GET  /api/history
-GET  /api/history/climate
-GET  /api/monthly-comparison
-GET  /api/recent-refills
-GET  /history.csv
-GET  /history/import
-POST /history/import/preview
-POST /history/import/apply
-POST /history/import/cancel
-GET  /history/maintenance
-POST /history/maintenance/compact
-POST /history/maintenance/repair
-POST /history/maintenance/delete-test
-POST /history/maintenance/delete-imported
-POST /generate-test-history
-POST /generate-test-history-10y
-POST /clear-history
-GET  /reboot
-```
+The UI language is selected at compile time in `Language.h`. API paths and machine-readable field names remain unchanged.
