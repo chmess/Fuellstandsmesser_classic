@@ -1,33 +1,89 @@
 # Weboberfläche / Web UI
 
 ## Deutsch
+
+Die Weboberfläche besteht aus vier Hauptseiten:
+
 ### Dashboard
-Füllstand Liter/Prozent, Füllhöhe, ToF-Abstand, Tankfaktor, RSSI, Verbrauch, WLAN/MQTT/ToF-Status, Diagramm und optional AHT10-Klima.
+- aktueller Füllstand in Litern und Prozent
+- Füllhöhe, Sensorabstand, Tankfaktor und RSSI
+- Verbrauchsübersicht
+- Status von WLAN, MQTT und ToF
+- Langzeitdiagramm für Füllstand & Verbrauch
+- optionaler AHT10-Klimabereich
+
+![Dashboard](images/dashboard.jpg)
 
 ### Historie
-Langzeitverlauf, Verbrauch, Nachfüll-/Quellenmarker, Monatsvergleich, Statistik, letzte Nachfüllungen, CSV Import/Export, Wartung und Testdaten.
+- Verlauf über 1/2 Jahr, 1 Jahr, 5 Jahre, 10 Jahre
+- Monatsvergleich
+- Statistik
+- letzte Nachfüllungen
+- CSV-Import/-Export
+- Wartungsfunktionen und Testdaten
+
+![Historie](images/history.jpg)
 
 ### Einstellungen
-WLAN, ToF-Sensortyp, AHT10, Tankgeometrie, Kalibrierung, Messfilter, Display und MQTT.
+- WLAN
+- Sensorauswahl und Kalibrierung
+- AHT10-Klima
+- Tankgeometrie
+- Messung / Filter
+- Display-Konfiguration
+- MQTT
+
+![Einstellungen](images/settings.jpg)
 
 ### System
-Firmware/Gerät, Uptime, Heap, Reset-Ursache, Flash/LittleFS, WLAN/MQTT, ToF/AHT10, History, APIs, Fragmentierung, Web-Requests, Web OTA und Displaystatus.
+- Firmware- und Geräteinformationen
+- Heap- und Speicherdiagnose
+- WLAN-, MQTT-, ToF- und AHT10-Status
+- History- und API-Diagnosen
+- Web-OTA und weitere Wartungszugänge
 
-Die UI-Sprache wird in `Language.h` beim Kompilieren ausgewählt. API-Pfade und maschinenlesbare Feldnamen bleiben unverändert.
-
-Wichtige Endpunkte: `/`, `/settings`, `/systemstatus`, `/update`, `/history`, `/api/status`, `/api/health`, `/api/history`, `/api/history/climate`, `/api/monthly-comparison`, `/api/recent-refills`, `/history.csv`, `/history/import`, `/history/maintenance`, `/reboot`.
+![System](images/system.jpg)
 
 ## English
+
+The web interface consists of four main pages:
+
 ### Dashboard
-Level in liters/percent, liquid height, ToF distance, tank factor, RSSI, consumption, Wi-Fi/MQTT/ToF state, chart and optional AHT10 climate.
+- current level in liters and percent
+- liquid height, sensor distance, tank factor and RSSI
+- consumption summary
+- Wi-Fi, MQTT and ToF status
+- long-term level & consumption chart
+- optional AHT10 climate section
+
+![Dashboard](images/dashboard.jpg)
 
 ### History
-Long-term history, consumption, refill/source markers, monthly comparison, statistics, recent refills, CSV import/export, maintenance and test data.
+- history ranges for 1/2 year, 1 year, 5 years, 10 years
+- monthly comparison
+- statistics
+- recent refills
+- CSV import/export
+- maintenance tools and test data
+
+![History](images/history.jpg)
 
 ### Settings
-Wi-Fi, ToF sensor type, AHT10, tank geometry, calibration, measurement filter, display and MQTT.
+- Wi-Fi
+- sensor selection and calibration
+- AHT10 climate
+- tank geometry
+- measurement / filtering
+- display configuration
+- MQTT
+
+![Settings](images/settings.jpg)
 
 ### System
-Firmware/device, uptime, heap, reset reason, flash/LittleFS, Wi-Fi/MQTT, ToF/AHT10, history, APIs, fragmentation, web requests, Web OTA and display state.
+- firmware and device information
+- heap and storage diagnostics
+- Wi-Fi, MQTT, ToF and AHT10 status
+- history and API diagnostics
+- Web OTA and additional maintenance access
 
-The UI language is selected at compile time in `Language.h`. API paths and machine-readable field names remain unchanged.
+![System](images/system.jpg)
