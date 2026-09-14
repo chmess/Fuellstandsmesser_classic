@@ -1,68 +1,55 @@
-# Software-Architektur
+# Software-Architektur / Software Architecture
 
-V0.12.0 ist der erste Release nach der vollständigen Aufteilung des ursprünglich großen Arduino-Sketches in echte C++-Module.
+## Deutsch
 
-## Module
+Die Firmware ist in echte C++-Module aufgeteilt.
 
 | Modul | Aufgabe |
 |---|---|
 | `AppConstants.h` | zentrale Compile-Time-Konstanten |
 | `AppTypes.h` | gemeinsame Datenstrukturen / Config |
-| `AppRuntime` | `setup()`, `loop()`, CLI, Runtime-Steuerung |
-| `ConfigI2C` | Config, EEPROM-Migrationen, I²C-Helfer |
+| `Language.h` | aktive Sprache auswählen |
+| `languages/lang_de.h` | deutsche Benutzertexte |
+| `languages/lang_en.h` | englische Benutzertexte |
+| `AppRuntime` | setup, loop, CLI, Runtime |
+| `ConfigI2C` | Config, Migrationen, I²C |
 | `Sensors` | VL53L0X, VL53L1X, AHT10 |
 | `Measurement` | Filter, Plausibilität, Tankberechnung |
-| `Display` | Nokia 5110 / PCD8544 |
+| `Display` | Nokia 5110 |
 | `WifiManager` | STA, Fallback-AP, Reconnect |
-| `MqttDiagnostics` | MQTT, Heap-/Storage-Diagnose |
-| `HistoryTypes` | History-Datenformate |
+| `MqttDiagnostics` | MQTT und Diagnose |
 | `History` | LittleFS-Historie, Import, Reparatur |
 | `WebServerManager` | Web UI, APIs, Web OTA |
 
-## Datenfluss
+Datenfluss: Sensoren → Messung → Display/MQTT/History → Web/CSV/Statistik.
 
-```text
-ToF / AHT10
-    │
-    ▼
-Sensors
-    │
-    ▼
-Measurement ──────► Display
-    │
-    ├──────────────► MQTT
-    │
-    └──────────────► History
-                         │
-                         ▼
-                    Web / CSV / Statistik
-```
+I18N ist Compile-Time-basiert. Benutzertexte werden übersetzt, maschinenlesbare Topics, API-Felder und persistente Formate bleiben stabil.
 
-## Warum modularisiert?
+ESP8266-RAM ist ein zentraler Grenzwert; mDNS, ArduinoOTA und Home-Assistant MQTT Discovery sind bewusst nicht enthalten.
 
-Ziele:
+## English
 
-- kleinere, übersichtlichere Dateien
-- klarere Abhängigkeiten
-- weniger Arduino-Autoprototyp-Probleme
-- gezieltere Wartung
-- bessere Git-Diffs
-- bessere Dokumentierbarkeit
-- leichtere spätere Tests
+The firmware is split into real C++ modules.
 
-## RAM-Strategie
+| Module | Responsibility |
+|---|---|
+| `AppConstants.h` | central compile-time constants |
+| `AppTypes.h` | shared data structures / config |
+| `Language.h` | active-language selection |
+| `languages/lang_de.h` | German user-facing strings |
+| `languages/lang_en.h` | English user-facing strings |
+| `AppRuntime` | setup, loop, CLI, runtime |
+| `ConfigI2C` | config, migrations, I²C |
+| `Sensors` | VL53L0X, VL53L1X, AHT10 |
+| `Measurement` | filtering, plausibility, tank calculation |
+| `Display` | Nokia 5110 |
+| `WifiManager` | STA, fallback AP, reconnect |
+| `MqttDiagnostics` | MQTT and diagnostics |
+| `History` | LittleFS history, import, repair |
+| `WebServerManager` | web UI, APIs, Web OTA |
 
-ESP8266-RAM ist der wichtigste Systemgrenzwert.
+Data flow: sensors → measurement → display/MQTT/history → web/CSV/statistics.
 
-Bewusste Entscheidungen:
+I18N is compile-time based. User-facing strings are translated; machine-readable topics, API fields and persistent formats remain stable.
 
-- kein mDNS
-- kein ArduinoOTA
-- kein Home-Assistant MQTT Discovery
-- Webantworten streamen
-- reduzierte große temporäre Strings
-- HTTP `Connection: close`
-- MQTT-Puffer begrenzt
-- History-/Climate-API getrennt
-
-Die Systemseite zeigt Heap-Minimum, größten Block und Fragmentierung.
+ESP8266 RAM is a primary constraint; mDNS, ArduinoOTA and Home Assistant MQTT Discovery are intentionally omitted.
