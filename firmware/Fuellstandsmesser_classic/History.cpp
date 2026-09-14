@@ -998,6 +998,7 @@ bool historyIntegrityCheckAndRepair(){
     Serial.println(F("[HISTORY REPAIR] Neue History konnte nicht aktiviert werden"));
     return false;
   }
+
   LittleFS.remove(HISTORY_REPAIR_BAK_FILE);
   LittleFS.remove(HISTORY_REPAIR_INDEX_FILE);
 
@@ -1996,4 +1997,1688 @@ bool historyGenerateFast(uint16_t days) {
 
   for (uint16_t i = 0; i < days; ++i) {
     const time_t ts = start + (time_t)i * 86400;
-    struct tm d;The requested file reference is not currently visible. Use files.search or files.list to rediscover the file, then retry with a returned ref_id or file_id.
+    struct tm d;
+    localtime_r(&ts, &d);
+
+    float seasonal =
+      1.0f + 0.55f *
+      cosf((((float)d.tm_yday - 15.0f) / 365.0f) * 6.2831853f);
+
+    float daily =
+      cap * 0.0012f * seasonal *
+      (1.0f + 0.08f * sinf((float)i * 1.731f));
+
+    daily = constrain(daily, 0.1f, cap * 0.01f);
+
+    uint16_t refill = 0;
+    uint16_t cons = (uint16_t)constrain((int)lroundf(daily), 0, 65535);
+
+    level -= daily;
+
+    if (level < cap * 0.25f || (i > 30 && (i % 170) == 0)) {
+      float before = level;
+      level = min(cap * 0.92f, level + cap * 0.60f);
+      refill = (uint16_t)constrain((int)lroundf(max(0.0f, level - before)), 0, 65535);
+      cons = 0;
+      refills++;
+    }
+
+    DailyHistoryRecord r = {};
+    historyClimateClear(r);
+    r.dayKey = historyDayKeyFromTime(ts);
+    r.samples = 1;
+    r.levelLiters = (uint16_t)constrain((int)lroundf(level), 0, 65535);
+
+    uint16_t p = (uint16_t)constrain(
+      (int)lroundf(historyPercentForLiters(r.levelLiters) * 10.0f),
+      0, 1000);
+
+    r.avgPermille = p;
+    r.minPermille = p;
+    r.maxPermille = p;
+    r.firstLiters = r.levelLiters;
+    r.consumptionLiters = cons;
+    r.refillLiters = refill;
+    r.source = HISTORY_TEST;
+    r.flags = 0;
+    r.crc16 = historyRecordCrc(r);
+
+    if (f.write(reinterpret_cast<const uint8_t*>(&r), sizeof(r)) != sizeof(r)) {
+      f.close();
+      Serial.print(F(LTXT_LOG_TEST_WRITE_ERROR));
+      Serial.println(i);
+      historyReady = false;
+      return false;
+    }
+
+    // Service the ESP8266/WDT, but do not reopen the file for every record.
+    if ((i & 0x1F) == 0) {
+      yield();
+
+      if ((i % 365) == 0 || i + 1 == days) {
+        Serial.print(F(LTXT_LOG_TEST_PROGRESS));
+        Serial.print(i + 1);
+        Serial.print('/');
+        Serial.println(days);
+      }
+    }
+  }
+
+  f.flush();
+  f.close();
+
+  historyReady = true;
+  historyCurrentValid = false;
+  historyWriteCount += days;
+  historyInvalidateStatsCache();
+
+  Serial.print(F(LTXT_LOG_TEST_DONE));
+  Serial.print(days);
+  Serial.print(F(LTXT_LOG_DAYS_REFILLS));
+  Serial.println(refills);
+
+  return true;
+}
+
+void historyGenerate(uint16_t days) {
+  historyGenerateFast(days);
+}
+
+void handleGenerateTestHistory(){historyGenerate(365);server.sendHeader("Location","/history",true);server.send(303,"text/plain","");}
+
+void handleGenerate10YearTestHistory(){historyGenerate(3650);server.sendHeader("Location","/history",true);server.send(303,"text/plain","");}
+
+void handleClearHistory(){
+  // Two-step safety confirmation:
+  // 1) Browser-confirm() im Formular
+  // 2) server side must confirm exactly LOESCHEN.
+  if(!server.hasArg("confirmText") || server.arg("confirmText")!=LTXT_DELETE_CONFIRM_WORD){
+    Serial.println(F(LTXT_LOG_DELETE_ABORTED));
+
+    String html;
+    html.reserve(520);
+    html=F("<!doctype html><html><head><meta charset='utf-8'>"
+           "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+           LHTML_HISTORY_NOT_DELETED_TITLE
+           "<body style='font-family:sans-serif;background:#111;color:#eee;padding:20px'>"
+           LHTML_HISTORY_NOT_DELETED_H2
+           "<p>Die Sicherheitsbestaetigung war nicht korrekt.</p>"
+           LHTML_DELETE_CONFIRM_P
+           "<p><a style='color:#8fd3ff' href='/history/maintenance'>Zur " LTXT_MAINTENANCE "</a></p>"
+           "</body></html>");
+    server.send(400,"text/html; charset=utf-8",html);
+    return;
+  }
+
+  Serial.println(F(LTXT_LOG_DELETE_CONFIRMED));
+historyResetFile();server.sendHeader("Location","/history",true);server.send(303,"text/plain","");}
+
+bool parseImportDate(String v,uint32_t& dayKey){
+  v.trim();char sep=v.indexOf('.')>=0?'.':'-';int p1=v.indexOf(sep),p2=p1>=0?v.indexOf(sep,p1+1):-1;
+  if(p1<0||p2<0)return false;
+  int d=v.substring(0,p1).toInt(),m=v.substring(p1+1,p2).toInt(),y=v.substring(p2+1).toInt();
+  if(y<100)y+=2000;if(d<1||d>31||m<1||m>12||y<2000)return false;
+  struct tm t={};t.tm_year=y-1900;t.tm_mon=m-1;t.tm_mday=d;t.tm_hour=12;time_t ts=mktime(&t);
+  if(ts==(time_t)-1)return false;struct tm chk;localtime_r(&ts,&chk);
+  if(chk.tm_mday!=d||chk.tm_mon!=m-1||chk.tm_year!=y-1900)return false;
+  dayKey=(uint32_t)y*10000UL+(uint32_t)m*100UL+(uint32_t)d;return true;
+}
+
+HistoryImportParsed parseHistoryImportLine(String line, uint32_t today, uint32_t oldest) {
+  HistoryImportParsed p{};
+  p.valid=false;
+  p.autoDerived=false;
+  p.climateValid=false;
+  p.source=HISTORY_IMPORTED;
+  p.climateSamples=0;
+
+  line.trim();
+  if(!line.length()){p.reason=F("Leer");return p;}
+
+  String cols[13];
+  uint8_t n=0;
+  int pos=0;
+  while(n<13){
+    int q=line.indexOf(';',pos);
+    if(q<0){
+      cols[n++]=line.substring(pos);
+      break;
+    }
+    cols[n++]=line.substring(pos,q);
+    pos=q+1;
+  }
+
+  if(n<2){p.reason=F("Zu wenige Spalten");return p;}
+
+  uint32_t day=0;
+  if(!parseImportDate(cols[0],day)){p.reason=F(LTXT_IMPORT_DATE_INVALID);return p;}
+  if(today && day>today){p.reason=F(LTXT_IMPORT_DATE_FUTURE);return p;}
+  if(oldest && day<oldest){p.reason=F(LTXT_IMPORT_TOO_OLD);return p;}
+
+  cols[1].trim();
+  cols[1].replace(',', '.');
+  if(!cols[1].length()){p.reason=F("Liter fehlt");return p;}
+  float liters=cols[1].toFloat();
+  if(!isfinite(liters)||liters<0||liters>65535){p.reason=F(LTXT_IMPORT_LITERS_INVALID);return p;}
+
+  p.dayKey=day;
+  p.liters=(uint16_t)constrain((int)lroundf(liters),0,65535);
+
+  const bool hasConsumption=n>=4 && cols[3].length();
+  const bool hasRefill=n>=5 && cols[4].length();
+  p.autoDerived=!(hasConsumption || hasRefill);
+
+  if(hasConsumption){
+    cols[3].replace(',', '.');
+    float v=cols[3].toFloat();
+    if(isfinite(v)&&v>=0)p.consumption=(uint16_t)constrain((int)lroundf(v),0,65535);
+  }
+
+  if(hasRefill){
+    cols[4].replace(',', '.');
+    float v=cols[4].toFloat();
+    if(isfinite(v)&&v>=0)p.refill=(uint16_t)constrain((int)lroundf(v),0,65535);
+  }
+
+  if(n>=6){
+    cols[5].trim();
+    int q=cols[5].toInt();
+    if(q>=0&&q<=2)p.source=(uint8_t)q;
+  }
+
+  // V3 climate format:
+  // 6 TempAvg, 7 TempMin, 8 TempMax, 9 RHAvg, 10 RHMin, 11 RHMax,
+  // optional 12 Klima_Samples.
+  if(n>=12){
+    bool present=true;
+    for(uint8_t i=6;i<=11;i++){
+      cols[i].trim();
+      if(!cols[i].length()){present=false;break;}
+      cols[i].replace(',', '.');
+    }
+
+    if(present){
+      const float ta=cols[6].toFloat();
+      const float tn=cols[7].toFloat();
+      const float tx=cols[8].toFloat();
+      const float ha=cols[9].toFloat();
+      const float hn=cols[10].toFloat();
+      const float hx=cols[11].toFloat();
+
+      const bool plausible=
+        isfinite(ta)&&isfinite(tn)&&isfinite(tx)&&
+        isfinite(ha)&&isfinite(hn)&&isfinite(hx)&&
+        ta>=-40.0f&&ta<=85.0f&&tn>=-40.0f&&tn<=85.0f&&tx>=-40.0f&&tx<=85.0f&&
+        ha>=0.0f&&ha<=100.0f&&hn>=0.0f&&hn<=100.0f&&hx>=0.0f&&hx<=100.0f&&
+        tn<=ta&&ta<=tx&&hn<=ha&&ha<=hx;
+
+      if(plausible){
+        p.climateValid=true;
+        p.tempAvgC=ta;
+        p.tempMinC=tn;
+        p.tempMaxC=tx;
+        p.humidityAvgPct=ha;
+        p.humidityMinPct=hn;
+        p.humidityMaxPct=hx;
+        p.climateSamples=1;
+
+        if(n>=13){
+          cols[12].trim();
+          if(cols[12].length()){
+            long cs=cols[12].toInt();
+            if(cs>0 && cs<=65535)p.climateSamples=(uint16_t)cs;
+          }
+        }
+      }
+    }
+  }
+
+  p.valid=true;
+  if(p.climateValid){
+    p.reason=p.autoDerived?F(LTXT_IMPORT_OK_AUTO_CLIMATE):F(LTXT_IMPORT_OK_CSV_CLIMATE);
+  }else{
+    p.reason=p.autoDerived?F("OK / automatisch"):F("OK / CSV");
+  }
+  return p;
+}
+
+void historyApplyImportedClimate(const HistoryImportParsed& p, DailyHistoryRecord& r){
+  historyClimateClear(r);
+  if(!p.climateValid)return;
+
+  r.tempAvgHalfC=historyEncodeTempHalfC(p.tempAvgC);
+  r.tempMinHalfC=historyEncodeTempHalfC(p.tempMinC);
+  r.tempMaxHalfC=historyEncodeTempHalfC(p.tempMaxC);
+  r.humidityAvgPct=historyEncodeHumidity(p.humidityAvgPct);
+  r.humidityMinPct=historyEncodeHumidity(p.humidityMinPct);
+  r.humidityMaxPct=historyEncodeHumidity(p.humidityMaxPct);
+  r.climateSamples=max((uint16_t)1,p.climateSamples);
+}
+
+void historyDeriveImportFlow(HistoryImportParsed& p, uint32_t prevDay, uint16_t prevLiters, bool prevValid) {
+  if(!p.valid || !p.autoDerived){
+    return;
+  }
+
+  p.consumption=0;
+  p.refill=0;
+
+  if(!prevValid || !historyDaysAreAdjacent(prevDay,p.dayKey)){
+    return;
+  }
+
+  const int32_t delta=(int32_t)p.liters-(int32_t)prevLiters;
+
+  if(delta >= (int32_t)HISTORY_REFILL_MIN_LITERS){
+    p.refill=(uint16_t)min((int32_t)65535,delta);
+    p.consumption=0;
+  }else if(delta < 0){
+    p.consumption=(uint16_t)min((int32_t)65535,-delta);
+  }
+}
+
+void handleHistoryImportPage(){
+  webStreamBegin(F(LTXT_CSV_IMPORT));
+  webStreamNav(1);
+  server.sendContent(F(
+    "<div class='card'><h1>CSV Import</h1>"
+    LHTML_IMPORT_COMPAT
+    LHTML_IMPORT_FULL_FORMAT
+    LHTML_IMPORT_V3
+    LHTML_IMPORT_SIMPLE
+    LHTML_IMPORT_SIMPLE_HINT_START
+    LTXT_IMPORT_SIMPLE_CALC_2
+    "<form method='POST' action='/history/import/preview' enctype='multipart/form-data'>"
+    "<input type='file' name='data' accept='.csv,text/csv' required>"
+    LHTML_IMPORT_CHECK_BUTTON
+    LHTML_BACK_HISTORY
+  ));
+  webStreamEnd();
+}
+
+void handleHistoryImportUpload(){
+  HTTPUpload& up=server.upload();
+  static File f;
+  if(up.status==UPLOAD_FILE_START){
+    LittleFS.remove(HISTORY_IMPORT_PREVIEW_FILE);
+    f=LittleFS.open(HISTORY_IMPORT_PREVIEW_FILE,"w");
+  }else if(up.status==UPLOAD_FILE_WRITE){
+    if(f)f.write(up.buf,up.currentSize);
+  }else if(up.status==UPLOAD_FILE_END||up.status==UPLOAD_FILE_ABORTED){
+    if(f)f.close();
+  }
+}
+
+void handleHistoryImportPreview(){
+  File f=LittleFS.open(HISTORY_IMPORT_PREVIEW_FILE,"r");
+  if(!f){server.send(400,"text/plain",LTXT_IMPORT_FILE_MISSING);return;}
+
+  uint32_t today=0; historyDateNow(today);
+  time_t now=time(nullptr);
+  uint32_t oldest=now>1700000000?historyDayKeyFromTime(now-(time_t)3650*86400):0;
+
+  uint32_t ok=0,bad=0,total=0,shown=0,autoRows=0,climateRows=0;
+  uint32_t prevDay=0;
+  uint16_t prevLiters=0;
+  bool prevValid=false;
+
+  // First pass: count only. No large RAM buffers.
+  while(f.available()){
+    String line=f.readStringUntil('\n');line.trim();
+    if(!line.length())continue;
+    if(line.startsWith(LTXT_DATE)||line.startsWith(LTXT_DATE_LOWER))continue;
+
+    total++;
+    HistoryImportParsed p=parseHistoryImportLine(line,today,oldest);
+    if(p.valid){
+      historyDeriveImportFlow(p,prevDay,prevLiters,prevValid);
+      ok++;
+      if(p.autoDerived)autoRows++;
+      if(p.climateValid)climateRows++;
+      prevDay=p.dayKey;
+      prevLiters=p.liters;
+      prevValid=true;
+    }else{
+      bad++;
+    }
+
+    if((total&0x3F)==0)yield();
+  }
+
+  f.seek(0,SeekSet);
+  prevDay=0;prevLiters=0;prevValid=false;
+
+  webStreamBegin(F(LTXT_IMPORT_PREVIEW));
+  webStreamNav(1);
+
+  server.sendContent(F("<div class='card'><h1>CSV Import – Vorschau</h1><div class='grid'>"));
+
+  String tiny;
+  tiny.reserve(220);
+  tiny=F("<div class='metric-card'><h3>Zeilen</h3><div>");
+  tiny+=String(total);tiny+=F(LHTML_IMPORT_VALID_CARD);
+  tiny+=String(ok);tiny+=F("</div></div><div class='metric-card'><h3>Verworfen</h3><div class='bad'>");
+  tiny+=String(bad);tiny+=F("</div></div><div class='metric-card'><h3>Automatisch berechnet</h3><div>");
+  tiny+=String(autoRows);tiny+=F(LHTML_IMPORT_CLIMATE_CARD);
+  tiny+=String(climateRows);tiny+=F("</div></div></div>");
+  server.sendContent(tiny);
+
+  server.sendContent(F(
+    LHTML_IMPORT_GAPS_HINT_START
+    LTXT_IMPORT_GAPS_HINT_2
+    LHTML_IMPORT_TABLE_HEADER
+  ));
+
+  uint32_t rowNo=0;
+  while(f.available() && shown<100){
+    String line=f.readStringUntil('\n');line.trim();
+    if(!line.length())continue;
+    if(line.startsWith(LTXT_DATE)||line.startsWith(LTXT_DATE_LOWER))continue;
+
+    rowNo++;
+    HistoryImportParsed p=parseHistoryImportLine(line,today,oldest);
+
+    if(p.valid){
+      historyDeriveImportFlow(p,prevDay,prevLiters,prevValid);
+      prevDay=p.dayKey;
+      prevLiters=p.liters;
+      prevValid=true;
+    }
+
+    String row;
+    row.reserve(280);
+    row+=F("<tr><td>");row+=String(rowNo);row+=F("</td><td>");
+    row+=p.valid?historyDateString(p.dayKey):F("--");
+    row+=F("</td><td>");row+=p.valid?String(p.liters):F("--");
+    row+=F("</td><td>");row+=p.valid?String(p.consumption):F("--");
+    row+=F("</td><td>");row+=p.valid?String(p.refill):F("--");
+    row+=F("</td><td>");
+    if(p.valid)row+=(p.source==HISTORY_MEASURED?F("Gemessen"):(p.source==HISTORY_TEST?F("Test"):F("Import")));
+    else row+=F("--");
+    row+=F("</td><td>");
+    if(p.valid&&p.climateValid){
+      row+=String(p.tempAvgC,1);row+=F(" C / ");row+=String(p.humidityAvgPct,0);row+=F(" %");
+    }else row+=F("--");
+    row+=F("</td><td>");
+    row+=p.valid?(p.autoDerived?F("automatisch"):F("aus CSV")):p.reason;
+    row+=F("</td><td>");
+    row+=p.valid?F("<span class='ok'>OK</span>"):F("<span class='bad'>Verworfen</span>");
+    row+=F("</td></tr>");
+    server.sendContent(row);
+
+    shown++;
+    if((shown&0x0F)==0)yield();
+  }
+
+  f.close();
+
+  server.sendContent(F("</table></div>"));
+  if(total>shown){
+    server.sendContent(F(LHTML_IMPORT_FIRST100));
+  }
+
+  server.sendContent(F("<div class='links' style='margin-top:14px'>"));
+  if(ok){
+    server.sendContent(F(LHTML_IMPORT_APPLY_FORM));
+  }
+  server.sendContent(F("<form method='POST' action='/history/import/cancel' style='margin:0'><button class='danger' type='submit'>Abbrechen</button></form></div></div>"));
+  webStreamEnd();
+}
+
+void handleHistoryImportApply(){
+  File preview=LittleFS.open(HISTORY_IMPORT_PREVIEW_FILE,"r");
+  if(!preview){server.send(400,"text/plain",LTXT_IMPORT_PREVIEW_MISSING);return;}
+
+  uint32_t today=0; historyDateNow(today);
+  time_t now=time(nullptr);
+  uint32_t oldest=now>1700000000?historyDayKeyFromTime(now-(time_t)3650*86400):0;
+
+  // ---------------------------------------------------------------------------
+  // Pass 1: determine the range of valid import days.
+  // This means the temporary index only needs to cover this exact date range.
+  // ---------------------------------------------------------------------------
+  int32_t minOrdinal=INT32_MAX;
+  int32_t maxOrdinal=INT32_MIN;
+  uint32_t previewValid=0;
+
+  while(preview.available()){
+    String line=preview.readStringUntil('\n');line.trim();
+    if(!line.length())continue;
+    if(line.startsWith(LTXT_DATE)||line.startsWith(LTXT_DATE_LOWER))continue;
+
+    HistoryImportParsed p=parseHistoryImportLine(line,today,oldest);
+    if(!p.valid)continue;
+
+    int32_t ord=historyDayOrdinal(p.dayKey);
+    if(ord<0)continue;
+    if(ord<minOrdinal)minOrdinal=ord;
+    if(ord>maxOrdinal)maxOrdinal=ord;
+    previewValid++;
+
+    if((previewValid&0x3F)==0)yield();
+  }
+
+  if(previewValid==0||minOrdinal>maxOrdinal){
+    preview.close();
+    LittleFS.remove(HISTORY_IMPORT_PREVIEW_FILE);
+    server.send(400,"text/plain",LTXT_IMPORT_NO_VALID);
+    return;
+  }
+
+  const uint32_t slots=(uint32_t)(maxOrdinal-minOrdinal+1);
+  preview.seek(0,SeekSet);
+
+  LittleFS.remove(HISTORY_IMPORT_INDEX_FILE);
+  File idxFile=LittleFS.open(HISTORY_IMPORT_INDEX_FILE,"w+");
+  if(!idxFile){
+    preview.close();
+    server.send(500,"text/plain","Import-Index konnte nicht erstellt werden");
+    return;
+  }
+
+  if(!historyImportIndexCreate(idxFile,slots)){
+    preview.close();idxFile.close();
+    LittleFS.remove(HISTORY_IMPORT_INDEX_FILE);
+    server.send(500,"text/plain","Import-Index Initialisierung fehlgeschlagen");
+    return;
+  }
+
+  File hist=LittleFS.open(HISTORY_FILE,"r+");
+  if(!hist){
+    preview.close();idxFile.close();
+    LittleFS.remove(HISTORY_IMPORT_INDEX_FILE);
+    server.send(500,"text/plain",LTXT_IMPORT_HISTORY_OPEN_ERROR);
+    return;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Scan the existing history EXACTLY ONCE and index only relevant days.
+  // ---------------------------------------------------------------------------
+  const uint32_t oldestPhysical=historyOldestPhysicalIndex();
+  uint32_t indexed=0;
+
+  for(uint32_t li=0;li<historyHeader.count;li++){
+    const uint32_t physical=(oldestPhysical+li)%historyHeader.capacity;
+    DailyHistoryRecord r;
+    if(!historyReadRecordFromOpenFile(hist,physical,r))continue;
+
+    const int32_t ord=historyDayOrdinal(r.dayKey);
+    if(ord<minOrdinal||ord>maxOrdinal)continue;
+
+    const uint32_t slot=(uint32_t)(ord-minOrdinal);
+    if(historyImportIndexWrite(idxFile,slot,physical))indexed++;
+
+    if((li&0x7F)==0)yield();
+  }
+  idxFile.flush();
+
+  // If no existing history day was found anywhere in the import range,
+  // the file index is unnecessary. All import days can then be appended
+  // directly and sequentially to the history. On ESP8266 this saves thousands of seek()
+  // operations and is many times faster for an initial import.
+  // Bulk append is safe only if the existing history is empty or
+  // ends chronologically BEFORE the import range. Otherwise older import days would
+  // be written physically after newer records and break chronological order.
+  bool bulkAppend = false;
+  if(indexed == 0){
+    if(historyHeader.count == 0){
+      bulkAppend = true;
+    }else{
+      File chronologyFile=LittleFS.open(HISTORY_FILE,"r");
+      DailyHistoryRecord newestExisting{};
+      uint32_t newestExistingLogical=0;
+      if(chronologyFile){
+        historyNewestRecordFromOpenFile(chronologyFile,newestExisting,newestExistingLogical);
+        chronologyFile.close();
+      }
+      const int32_t newestExistingOrdinal=historyDayOrdinal(newestExisting.dayKey);
+      bulkAppend = (newestExisting.dayKey>0 && newestExistingOrdinal < minOrdinal);
+    }
+  }
+
+  if(bulkAppend){
+    Serial.println(F("[IMPORT] BULK-APPEND aktiv: Chronologie bleibt erhalten"));
+  }else if(indexed==0){
+    Serial.println(F("[IMPORT] BULK-APPEND gesperrt: bestehende neuere History -> INDEX-Modus"));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Pass 2: apply the import. For existing days, use O(1) lookup via the index;
+  // for an initial import, use direct sequential bulk append without index access.
+  // Duplicate days within the same CSV: the later record wins,
+  // because the index points to the new record immediately after an append.
+  // ---------------------------------------------------------------------------
+  const uint32_t importApplyStartMs=millis();
+  uint32_t ok=0,bad=0,derived=0,refills=0,updated=0,appended=0;
+  uint32_t processed=0;
+  uint32_t prevDay=0;
+  uint16_t prevLiters=0;
+  bool prevValid=false;
+  bool headerDirty=false;
+
+  Serial.print(F("[IMPORT] Fast-Apply Start valid="));
+  Serial.print(previewValid);
+  Serial.print(F(" slots="));
+  Serial.print(slots);
+  Serial.print(F(" indexed="));
+  Serial.println(indexed);
+
+  while(preview.available()){
+    String line=preview.readStringUntil('\n');line.trim();
+    if(!line.length())continue;
+    if(line.startsWith(LTXT_DATE)||line.startsWith(LTXT_DATE_LOWER))continue;
+
+    HistoryImportParsed p=parseHistoryImportLine(line,today,oldest);
+    if(!p.valid){bad++;continue;}
+
+    processed++;
+    if((processed%250U)==0U || processed==previewValid){
+      Serial.print(F(LTXT_LOG_IMPORT_PROGRESS));
+      Serial.print(processed);
+      Serial.print('/');
+      Serial.println(previewValid);
+      yield();
+    }
+
+    historyDeriveImportFlow(p,prevDay,prevLiters,prevValid);
+
+    if(p.autoDerived){
+      derived++;
+      if(p.refill>=HISTORY_REFILL_MIN_LITERS)refills++;
+    }
+
+    const int32_t ord=historyDayOrdinal(p.dayKey);
+    if(ord<minOrdinal||ord>maxOrdinal){
+      bad++;
+      continue;
+    }
+
+    const uint32_t slot=(uint32_t)(ord-minOrdinal);
+    uint32_t physical=0xFFFFFFFFUL;
+
+    DailyHistoryRecord r={};
+    historyApplyImportedClimate(p,r);
+    r.dayKey=p.dayKey;
+    r.samples=1;
+    r.levelLiters=p.liters;
+    const uint16_t permille=(uint16_t)constrain(
+      (int)lroundf(historyPercentForLiters(p.liters)*10.0f),0,1000);
+    r.avgPermille=r.minPermille=r.maxPermille=permille;
+    r.firstLiters=p.liters;
+    r.consumptionLiters=p.consumption;
+    r.refillLiters=p.refill;
+    r.source=p.source<=HISTORY_TEST?p.source:HISTORY_IMPORTED;
+
+    bool writeOk=false;
+
+    if(bulkAppend){
+      // Initial import: no index read/write operations. Write directly at the current
+      // writeIndex position and update the header only in RAM.
+      physical=historyHeader.writeIndex;
+      writeOk=historyWriteRecordToOpenFile(hist,physical,r);
+
+      if(writeOk){
+        if(historyHeader.count<historyHeader.capacity)historyHeader.count++;
+        historyHeader.writeIndex=(historyHeader.writeIndex+1)%historyHeader.capacity;
+        headerDirty=true;
+        appended++;
+      }
+    }else{
+      if(!historyImportIndexRead(idxFile,slot,physical)){
+        bad++;
+        continue;
+      }
+
+      if(physical!=0xFFFFFFFFUL && physical<historyHeader.capacity){
+        writeOk=historyWriteRecordToOpenFile(hist,physical,r);
+        if(writeOk)updated++;
+      }else{
+        physical=historyHeader.writeIndex;
+        writeOk=historyWriteRecordToOpenFile(hist,physical,r);
+
+        if(writeOk){
+          if(historyHeader.count<historyHeader.capacity)historyHeader.count++;
+          historyHeader.writeIndex=(historyHeader.writeIndex+1)%historyHeader.capacity;
+          headerDirty=true;
+          appended++;
+          historyImportIndexWrite(idxFile,slot,physical);
+        }
+      }
+    }
+
+    if(writeOk){
+      ok++;
+      historyWriteCount++;
+    }else{
+      bad++;
+      historyWriteErrors++;
+    }
+
+    prevDay=p.dayKey;
+    prevLiters=p.liters;
+    prevValid=true;
+
+    if(bulkAppend){
+      if(((ok+bad)%500U)==0U){
+        hist.flush();
+        yield();
+      }
+    }else if(((ok+bad)&0x3F)==0){
+      hist.flush();
+      yield();
+    }
+  }
+
+  bool headerOk=true;
+  if(headerDirty)headerOk=historyWriteHeader(hist);
+  hist.flush();
+  idxFile.flush();
+
+  preview.close();
+  hist.close();
+  idxFile.close();
+
+  LittleFS.remove(HISTORY_IMPORT_INDEX_FILE);
+  LittleFS.remove(HISTORY_IMPORT_PREVIEW_FILE);
+
+  historyInvalidateStatsCache();
+
+  // If the current day was imported, the next measurement cycle will
+  // continue the same day cleanly through the duplicate-day guard.
+  historyCurrentValid=false;
+
+  Serial.print(F(LTXT_LOG_IMPORT_DONE));Serial.print(processed);
+  Serial.print(F(" OK="));Serial.print(ok);
+  Serial.print(F(LTXT_LOG_ERRORS_SUFFIX));Serial.print(bad);
+  Serial.print(F(" Update="));Serial.print(updated);
+  Serial.print(F(" Append="));Serial.print(appended);
+  Serial.print(F(" automatisch="));Serial.print(derived);
+  Serial.print(F(LTXT_LOG_REFILLS_SUFFIX));Serial.print(refills);
+  Serial.print(F(" Header="));Serial.print(headerOk?F("OK"):F(LTXT_ERROR));
+  Serial.print(F(" Modus="));Serial.print(bulkAppend?F("BULK"):F("INDEX"));
+  Serial.print(F(" Zeit="));Serial.print(millis()-importApplyStartMs);Serial.println(F(" ms"));
+
+  webStreamBegin(F(LTXT_CSV_IMPORT));
+  webStreamNav(1);
+
+  String s;
+  s.reserve(480);
+  s=F("<div class='card'><h1>CSV Import abgeschlossen</h1><div class='grid'>"
+      "<div class='metric-card'><h3>Uebernommen</h3><div>");
+  s+=String(ok);
+  s+=F("</div></div><div class='metric-card'><h3>Verworfen</h3><div>");
+  s+=String(bad);
+  s+=F("</div></div><div class='metric-card'><h3>Aktualisiert</h3><div>");
+  s+=String(updated);
+  s+=F("</div></div><div class='metric-card'><h3>Neu</h3><div>");
+  s+=String(appended);
+  s+=F("</div></div><div class='metric-card'><h3>Automatisch berechnet</h3><div>");
+  s+=String(derived);
+  s+=F(LHTML_REFILLS_CARD);
+  s+=String(refills);
+  s+=F("</div></div><div class='metric-card'><h3>Importmodus</h3><div>");
+  s+=bulkAppend?F("BULK"):F("INDEX");
+  s+=F("</div></div><div class='metric-card'><h3>Dauer</h3><div>");
+  s+=String(millis()-importApplyStartMs);
+  s+=F(" ms</div></div></div>");
+  if(!bulkAppend && indexed==0 && appended>0){
+    s+=F("<p style='color:#ffb52e'><b>Hinweis:</b> Ältere Daten wurden zu einer bereits neueren History hinzugefügt. "
+         LTXT_IMPORT_REPAIR_HINT);
+  }
+  if(!headerOk)s+=F(LHTML_HEADER_SAVE_WARNING);
+  s+=F("<div class='links' style='margin-top:14px'><a class='btn' href='/history'>Zur Historie</a></div></div>");
+  server.sendContent(s);
+  webStreamEnd();
+}
+
+void handleHistoryImportCancel(){
+  LittleFS.remove(HISTORY_IMPORT_PREVIEW_FILE);
+  server.sendHeader("Location","/history",true);
+  server.send(303,"text/plain","");
+}
+
+uint32_t historyCountSource(uint8_t source){
+  if(!historyReady || historyHeader.count==0)return 0;
+
+  File f=LittleFS.open(HISTORY_FILE,"r");
+  if(!f)return 0;
+
+  const uint32_t oldest=historyOldestPhysicalIndex();
+  uint32_t count=0;
+
+  for(uint32_t li=0;li<historyHeader.count;li++){
+    const uint32_t physical=(oldest+li)%historyHeader.capacity;
+    DailyHistoryRecord r;
+    if(historyReadRecordFromOpenFile(f,physical,r) && r.source==source)count++;
+    if((li&0x7F)==0)yield();
+  }
+
+  f.close();
+  return count;
+}
+
+bool historyDeleteSource(uint8_t source,uint32_t& removed){
+  removed=0;
+  if(!historyReady)return false;
+  if(historyHeader.count==0)return true;
+
+  File src=LittleFS.open(HISTORY_FILE,"r");
+  if(!src)return false;
+
+  LittleFS.remove(HISTORY_FILTER_TMP_FILE);
+  File tmp=LittleFS.open(HISTORY_FILTER_TMP_FILE,"w+");
+  if(!tmp){
+    src.close();
+    return false;
+  }
+
+  HistoryHeader newHeader=historyHeader;
+  newHeader.count=0;
+  newHeader.writeIndex=0;
+  newHeader.crc=historyHeaderCrc(newHeader);
+
+  if(tmp.write(reinterpret_cast<const uint8_t*>(&newHeader),sizeof(newHeader))!=sizeof(newHeader)){
+    src.close();tmp.close();
+    LittleFS.remove(HISTORY_FILTER_TMP_FILE);
+    return false;
+  }
+
+  const uint32_t oldest=historyOldestPhysicalIndex();
+  uint32_t kept=0;
+
+  for(uint32_t li=0;li<historyHeader.count;li++){
+    const uint32_t physical=(oldest+li)%historyHeader.capacity;
+    DailyHistoryRecord r;
+
+    if(!historyReadRecordFromOpenFile(src,physical,r)){
+      // Do not copy defective records here without validation.
+      removed++;
+      continue;
+    }
+
+    if(r.source==source){
+      removed++;
+      continue;
+    }
+
+    const uint32_t offset=sizeof(HistoryHeader)+kept*sizeof(DailyHistoryRecord);
+    if(!tmp.seek(offset,SeekSet)){
+      src.close();tmp.close();
+      LittleFS.remove(HISTORY_FILTER_TMP_FILE);
+      return false;
+    }
+
+    if(tmp.write(reinterpret_cast<const uint8_t*>(&r),sizeof(r))!=sizeof(r)){
+      src.close();tmp.close();
+      LittleFS.remove(HISTORY_FILTER_TMP_FILE);
+      return false;
+    }
+
+    kept++;
+    if((li&0x7F)==0)yield();
+  }
+
+  newHeader.count=kept;
+  newHeader.writeIndex=kept%newHeader.capacity;
+  newHeader.crc=historyHeaderCrc(newHeader);
+
+  if(!tmp.seek(0,SeekSet) ||
+     tmp.write(reinterpret_cast<const uint8_t*>(&newHeader),sizeof(newHeader))!=sizeof(newHeader)){
+    src.close();tmp.close();
+    LittleFS.remove(HISTORY_FILTER_TMP_FILE);
+    return false;
+  }
+
+  tmp.flush();
+  src.close();
+  tmp.close();
+
+  LittleFS.remove(HISTORY_FILTER_BAK_FILE);
+
+  if(!LittleFS.rename(HISTORY_FILE,HISTORY_FILTER_BAK_FILE)){
+    LittleFS.remove(HISTORY_FILTER_TMP_FILE);
+    return false;
+  }
+
+  if(!LittleFS.rename(HISTORY_FILTER_TMP_FILE,HISTORY_FILE)){
+    LittleFS.rename(HISTORY_FILTER_BAK_FILE,HISTORY_FILE);
+    LittleFS.remove(HISTORY_FILTER_TMP_FILE);
+    return false;
+  }
+
+  LittleFS.remove(HISTORY_FILTER_BAK_FILE);
+
+  historyHeader=newHeader;
+  historyCurrentValid=false;
+  historyInvalidateStatsCache();
+
+  return true;
+}
+
+bool historyCompactAdjacentDuplicates(uint32_t& removed,uint32_t& invalid){
+  removed=0;
+  invalid=0;
+  historyCompactPerformed=false;
+
+  if(!historyReady)return false;
+  if(historyHeader.count==0)return true;
+
+  Serial.print(F("[HISTORY COMPACT] Start count="));
+  Serial.println(historyHeader.count);
+
+  File src=LittleFS.open(HISTORY_FILE,"r");
+  if(!src){
+    Serial.println(F(LTXT_LOG_COMPACT_UNREADABLE));
+    return false;
+  }
+
+  LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
+  File tmp=LittleFS.open(HISTORY_COMPACT_TMP_FILE,"w+");
+  if(!tmp){
+    src.close();
+    Serial.println(F(LTXT_LOG_COMPACT_TEMP));
+    return false;
+  }
+
+  HistoryHeader newHeader=historyHeader;
+  newHeader.count=0;
+  newHeader.writeIndex=0;
+  newHeader.crc=historyHeaderCrc(newHeader);
+
+  if(tmp.write(reinterpret_cast<const uint8_t*>(&newHeader),sizeof(newHeader))!=sizeof(newHeader)){
+    src.close();tmp.close();
+    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
+    return false;
+  }
+
+  const uint32_t oldest=historyOldestPhysicalIndex();
+  DailyHistoryRecord pending{};
+  bool havePending=false;
+  uint32_t kept=0;
+
+  auto flushPending=[&]()->bool{
+    if(!havePending)return true;
+    const uint32_t offset=sizeof(HistoryHeader)+kept*sizeof(DailyHistoryRecord);
+    if(!tmp.seek(offset,SeekSet))return false;
+    if(tmp.write(reinterpret_cast<const uint8_t*>(&pending),sizeof(pending))!=sizeof(pending))return false;
+    kept++;
+    havePending=false;
+    return true;
+  };
+
+  for(uint32_t li=0;li<historyHeader.count;li++){
+    const uint32_t physical=(oldest+li)%historyHeader.capacity;
+    DailyHistoryRecord r;
+
+    if(!historyReadRecordFromOpenFile(src,physical,r)){
+      invalid++;
+      if((li&0x1F)==0)yield();
+      continue;
+    }
+
+    if(!havePending){
+      pending=r;
+      havePending=true;
+    }else if(r.dayKey==pending.dayKey){
+      // The last record of the same day wins.
+      pending=r;
+      removed++;
+    }else{
+      if(!flushPending()){
+        src.close();tmp.close();
+        LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
+        return false;
+      }
+      pending=r;
+      havePending=true;
+    }
+
+    if((li&0x1F)==0)yield();
+  }
+
+  if(!flushPending()){
+    src.close();tmp.close();
+    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
+    return false;
+  }
+
+  newHeader.count=kept;
+  newHeader.writeIndex=kept%newHeader.capacity;
+  newHeader.crc=historyHeaderCrc(newHeader);
+
+  if(!tmp.seek(0,SeekSet) ||
+     tmp.write(reinterpret_cast<const uint8_t*>(&newHeader),sizeof(newHeader))!=sizeof(newHeader)){
+    src.close();tmp.close();
+    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
+    return false;
+  }
+
+  tmp.flush();
+  src.close();
+  tmp.close();
+  yield();
+
+  if(removed==0 && invalid==0){
+    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
+    Serial.println(F("[HISTORY COMPACT] Keine direkten Duplikate gefunden"));
+    return true;
+  }
+
+  LittleFS.remove(HISTORY_COMPACT_BAK_FILE);
+
+  if(!LittleFS.rename(HISTORY_FILE,HISTORY_COMPACT_BAK_FILE)){
+    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
+    return false;
+  }
+
+  if(!LittleFS.rename(HISTORY_COMPACT_TMP_FILE,HISTORY_FILE)){
+    LittleFS.rename(HISTORY_COMPACT_BAK_FILE,HISTORY_FILE);
+    LittleFS.remove(HISTORY_COMPACT_TMP_FILE);
+    return false;
+  }
+
+  LittleFS.remove(HISTORY_COMPACT_BAK_FILE);
+
+  historyHeader=newHeader;
+  historyCurrentValid=false;
+  historyInvalidateStatsCache();
+
+  historyCompactDuplicates=removed;
+  historyCompactInvalid=invalid;
+  historyCompactPerformed=true;
+
+  Serial.print(F(LTXT_LOG_COMPACT_DONE));
+  Serial.print(removed);
+  Serial.print(F(" invalid="));
+  Serial.print(invalid);
+  Serial.print(F(" count="));
+  Serial.println(historyHeader.count);
+
+  return true;
+}
+
+HistoryDuplicateScanResult historyScanDuplicates(){
+  HistoryDuplicateScanResult result{};
+  result.ok=false;
+
+  if(!historyReady)return result;
+
+  File f=LittleFS.open(HISTORY_FILE,"r");
+  if(!f)return result;
+
+  result.total=historyHeader.count;
+
+  uint32_t lastDay=0;
+  bool haveLastDay=false;
+  int32_t previousOrdinal=INT32_MIN;
+
+  for(uint32_t i=0;i<historyHeader.count;i++){
+    DailyHistoryRecord rec;
+
+    if(!historyReadChronologicalFromOpenFile(f,i,rec)){
+      result.invalid++;
+      if((i&0x7F)==0)yield();
+      continue;
+    }
+
+    result.valid++;
+
+    const int32_t ord=historyDayOrdinal(rec.dayKey);
+    if(ord>=0){
+      if(previousOrdinal!=INT32_MIN && ord<previousOrdinal)result.outOfOrder++;
+      previousOrdinal=ord;
+    }
+
+    if(haveLastDay && rec.dayKey==lastDay){
+      result.duplicates++;
+    }else{
+      lastDay=rec.dayKey;
+      haveLastDay=true;
+      result.uniqueDays++;
+    }
+
+    if((i&0x7F)==0)yield();
+  }
+
+  f.close();
+  result.ok=true;
+
+  Serial.print(F("[HISTORY DUPSCAN] total="));
+  Serial.print(result.total);
+  Serial.print(F(" valid="));
+  Serial.print(result.valid);
+  Serial.print(F(" unique="));
+  Serial.print(result.uniqueDays);
+  Serial.print(F(" duplicates="));
+  Serial.print(result.duplicates);
+  Serial.print(F(" invalid="));
+  Serial.print(result.invalid);
+  Serial.print(F(" outOfOrder="));
+  Serial.println(result.outOfOrder);
+
+  return result;
+}
+
+void handleHistoryMaintenancePage(){
+  const uint32_t scanStartMs=millis();
+  const HistoryDuplicateScanResult dupScan=historyScanDuplicates();
+  const uint32_t scanTimeMs=millis()-scanStartMs;
+  const uint32_t measuredRecords=historyCountSource(HISTORY_MEASURED);
+  const uint32_t importedRecords=historyCountSource(HISTORY_IMPORTED);
+  const uint32_t testRecords=historyCountSource(HISTORY_TEST);
+
+  webStreamBegin(F(LTXT_HISTORY_MAINTENANCE));
+  webStreamNav(1);
+
+  server.sendContent(F(
+    LHTML_MAINT_TITLE
+    "<div class='links'><a class='btn' href='/history'>Zur Historie</a></div></div>"
+    LHTML_MAINT_DESC
+    "<div class='grid'>"
+  ));
+
+  webMetricCard(F(LTXT_CURRENT_RECORDS),String(historyHeader.count));
+  webMetricCard(F(LTXT_SCAN_VALID),dupScan.ok?String(dupScan.valid):String(F(LTXT_ERROR)));
+  webMetricCard(F(LTXT_UNIQUE_DAYS),dupScan.ok?String(dupScan.uniqueDays):String(F(LTXT_ERROR)));
+  webMetricCard(F("Scan: Duplikate"),dupScan.ok?String(dupScan.duplicates):String(F(LTXT_ERROR)));
+  webMetricCard(F(LTXT_SCAN_INVALID),dupScan.ok?String(dupScan.invalid):String(F(LTXT_ERROR)));
+  webMetricCard(F(LTXT_SCAN_ORDER_ERRORS),dupScan.ok?String(dupScan.outOfOrder):String(F(LTXT_ERROR)));
+  webMetricCard(F("Scan-Dauer"),String(scanTimeMs)+F(" ms"));
+  webMetricCard(F("Duplikate erkannt"),String(historyRepairDuplicates));
+  webMetricCard(F(LTXT_INVALID_CRC),String(historyRepairInvalid));
+  webMetricCard(F(LTXT_ORDER_ERRORS),String(historyRepairOutOfOrder));
+  webMetricCard(F("Entfernt"),String(historyRepairRemoved));
+  webMetricCard(F(LTXT_LAST_REPAIR),
+    historyRepairPerformed?String(F("JA")):String(F("NEIN")));
+  webMetricCard(F(LTXT_SOURCE_MEASURED),String(measuredRecords)+F(" Records"));
+  webMetricCard(F(LTXT_SOURCE_IMPORT),String(importedRecords)+F(" Records"));
+  webMetricCard(F(LTXT_SOURCE_TEST),String(testRecords)+F(" Records"));
+  webMetricCard(F("Quick-Compact entfernt"),String(historyCompactDuplicates));
+  webMetricCard(F("Quick-Compact invalid"),String(historyCompactInvalid));
+
+  server.sendContent(F(
+    "</div>"
+  ));
+
+  if(!dupScan.ok){
+    server.sendContent(F("<p class='muted'>Duplicate-Scan konnte nicht ausgeführt werden.</p>"));
+  }else if(dupScan.duplicates>0 || dupScan.invalid>0 || dupScan.outOfOrder>0){
+    server.sendContent(F("<p style='color:#ffb52e'><b>Bereinigung empfohlen:</b> "));
+    webSendSafe(String(dupScan.duplicates));
+    server.sendContent(F(" Duplikate, "));
+    webSendSafe(String(dupScan.invalid));
+    server.sendContent(F(LTXT_MAINT_INVALID_FRAGMENT));
+    webSendSafe(String(dupScan.outOfOrder));
+    server.sendContent(F(LTXT_MAINT_ORDER_FRAGMENT));
+  }else{
+    server.sendContent(F(LHTML_MAINT_CLEAN));
+  }
+
+  server.sendContent(F(
+    "<form method='POST' action='/history/maintenance/compact' style='margin-top:16px'>"
+    LHTML_CLEANUP_RUNNING_BUTTON
+    "Schnelle Duplikatbereinigung</button></form>"
+    "<form method='POST' action='/history/maintenance/repair' style='margin-top:16px' "
+    LHTML_NORMALIZE_CONFIRM
+    LHTML_NORMALIZE_RUNNING
+    "Chronologie normalisieren / reparieren</button></form>"
+    "<form method='POST' action='/history/maintenance/delete-test' style='margin-top:10px'>"
+    "<button class='danger' type='submit' "
+    LHTML_DELETE_TEST_CONFIRM
+    LHTML_DELETE_TEST_BUTTON_END
+    "<form method='POST' action='/history/maintenance/delete-imported' style='margin-top:10px'>"
+    "<button class='danger' type='submit' "
+    LHTML_DELETE_IMPORT_CONFIRM
+    "Nur Importdaten löschen</button></form>"
+    "<p class='muted' style='margin-top:12px'>"
+    "<b>Chronologie normalisieren</b> ist besonders nach dem Import älterer Daten sinnvoll, wenn bereits neuere Messwerte vorhanden waren. "
+    LTXT_MAINT_SORT_NOTE_1
+    LTXT_MAINT_SORT_NOTE_2
+    LTXT_MAINT_SORT_NOTE_3
+    "</p></div>"
+  ));
+
+  webStreamEnd();
+}
+
+void handleHistoryCompactDuplicates(){
+  const uint32_t before=historyHeader.count;
+  const uint32_t heapBefore=ESP.getFreeHeap();
+  const uint32_t startMs=millis();
+
+  uint32_t removed=0,invalid=0;
+  const bool ok=historyCompactAdjacentDuplicates(removed,invalid);
+
+  const uint32_t elapsed=millis()-startMs;
+  const uint32_t heapAfter=ESP.getFreeHeap();
+
+  Serial.print(F("[HISTORY COMPACT] Ergebnis="));
+  Serial.print(ok?F("OK"):F(LTXT_ERROR));
+  Serial.print(F(" time="));
+  Serial.print(elapsed);
+  Serial.print(F(" ms heap="));
+  Serial.print(heapBefore);
+  Serial.print(F("->"));
+  Serial.println(heapAfter);
+
+  webStreamBegin(F(LTXT_HISTORY_MAINTENANCE));
+  webStreamNav(1);
+
+  server.sendContent(F(
+    "<div class='card'><h1>Schnelle Duplikatbereinigung</h1><div class='grid'>"
+  ));
+
+  webMetricCard(F("Ergebnis"),ok?String(F("OK")):String(F(LTXT_ERROR)));
+  webMetricCard(F("Vorher"),String(before)+F(" Records"));
+  webMetricCard(F("Nachher"),String(historyHeader.count)+F(" Records"));
+  webMetricCard(F("Duplikate entfernt"),String(removed));
+  webMetricCard(F(LTXT_INVALID_REMOVED),String(invalid));
+  webMetricCard(F("Dauer"),String(elapsed)+F(" ms"));
+
+  server.sendContent(F(
+    LHTML_QUICK_CLEAN_START
+    LTXT_QUICK_CLEAN_NOTE_2
+    "<div class='links' style='margin-top:16px'>"
+    "<a class='btn' href='/history/maintenance'>" LTXT_MAINTENANCE "</a>"
+    "<a class='btn' href='/history'>Historie</a>"
+    "</div></div>"
+  ));
+
+  webStreamEnd();
+}
+
+void handleHistoryMaintenanceRepair(){
+  const uint32_t heapBefore=ESP.getFreeHeap();
+  const uint32_t startMs=millis();
+
+  Serial.println(F(LTXT_LOG_MAINT_MANUAL));
+
+  const bool ok=historyIntegrityCheckAndRepair();
+
+  const uint32_t elapsed=millis()-startMs;
+  const uint32_t heapAfter=ESP.getFreeHeap();
+
+  Serial.print(F("[HISTORY MAINT] Ergebnis="));
+  Serial.print(ok?F("OK"):F(LTXT_ERROR));
+  Serial.print(F(" time="));
+  Serial.print(elapsed);
+  Serial.print(F(" ms heap="));
+  Serial.print(heapBefore);
+  Serial.print(F("->"));
+  Serial.println(heapAfter);
+
+  webStreamBegin(F(LTXT_HISTORY_MAINTENANCE));
+  webStreamNav(1);
+
+  server.sendContent(F(
+    "<div class='card'><h1>History-Normalisierung abgeschlossen</h1>"
+    "<div class='grid'>"
+  ));
+
+  webMetricCard(F("Ergebnis"),ok?String(F("OK")):String(F(LTXT_ERROR)));
+  webMetricCard(F("Records"),String(historyHeader.count));
+  webMetricCard(F("Duplikate"),String(historyRepairDuplicates));
+  webMetricCard(F(LTXT_INVALID_CRC),String(historyRepairInvalid));
+  webMetricCard(F(LTXT_ORDER_ERRORS),String(historyRepairOutOfOrder));
+  webMetricCard(F("Entfernt"),String(historyRepairRemoved));
+  webMetricCard(F("Repariert"),historyRepairPerformed?String(F("JA")):String(F("NEIN")));
+  webMetricCard(F("Dauer"),String(elapsed)+F(" ms"));
+
+  server.sendContent(F(
+    "</div><div class='links' style='margin-top:16px'>"
+    "<a class='btn' href='/history/maintenance'>" LTXT_MAINTENANCE "</a>"
+    "<a class='btn' href='/history'>Historie</a>"
+    "</div></div>"
+  ));
+
+  webStreamEnd();
+}
+
+void handleHistoryDeleteTestData(){
+  const uint32_t before=historyHeader.count;
+  uint32_t removed=0;
+
+  Serial.println(F(LTXT_LOG_MAINT_TEST_DELETE));
+
+  const bool ok=historyDeleteSource(HISTORY_TEST,removed);
+
+  Serial.print(F(LTXT_LOG_MAINT_TEST_RESULT));
+  Serial.print(ok?F("OK"):F(LTXT_ERROR));
+  Serial.print(F(" entfernt="));
+  Serial.print(removed);
+  Serial.print(F(" count="));
+  Serial.print(before);
+  Serial.print(F("->"));
+  Serial.println(historyHeader.count);
+
+  webStreamBegin(F(LTXT_HISTORY_MAINTENANCE));
+  webStreamNav(1);
+
+  server.sendContent(F(
+    LHTML_DELETE_TEST_TITLE
+  ));
+
+  webMetricCard(F("Ergebnis"),ok?String(F("OK")):String(F(LTXT_ERROR)));
+  webMetricCard(F("Entfernt"),String(removed));
+  webMetricCard(F("Vorher"),String(before)+F(" Records"));
+  webMetricCard(F("Nachher"),String(historyHeader.count)+F(" Records"));
+
+  server.sendContent(F(
+    "</div><div class='links' style='margin-top:16px'>"
+    "<a class='btn' href='/history/maintenance'>" LTXT_MAINTENANCE "</a>"
+    "<a class='btn' href='/history'>Historie</a>"
+    "</div></div>"
+  ));
+
+  webStreamEnd();
+}
+
+void handleHistoryDeleteImportedData(){
+  const uint32_t before=historyHeader.count;
+  uint32_t removed=0;
+
+  Serial.println(F(LTXT_LOG_MAINT_IMPORT_DELETE));
+
+  const bool ok=historyDeleteSource(HISTORY_IMPORTED,removed);
+
+  Serial.print(F(LTXT_LOG_MAINT_IMPORT_RESULT));
+  Serial.print(ok?F("OK"):F(LTXT_ERROR));
+  Serial.print(F(" entfernt="));
+  Serial.print(removed);
+  Serial.print(F(" count="));
+  Serial.print(before);
+  Serial.print(F("->"));
+  Serial.println(historyHeader.count);
+
+  webStreamBegin(F(LTXT_HISTORY_MAINTENANCE));
+  webStreamNav(1);
+
+  server.sendContent(F(
+    "<div class='card'><h1>Importdaten löschen</h1><div class='grid'>"
+  ));
+
+  webMetricCard(F("Ergebnis"),ok?String(F("OK")):String(F(LTXT_ERROR)));
+  webMetricCard(F("Entfernt"),String(removed));
+  webMetricCard(F("Vorher"),String(before)+F(" Records"));
+  webMetricCard(F("Nachher"),String(historyHeader.count)+F(" Records"));
+
+  server.sendContent(F(
+    "</div><div class='links' style='margin-top:16px'>"
+    "<a class='btn' href='/history/maintenance'>" LTXT_MAINTENANCE "</a>"
+    "<a class='btn' href='/history'>Historie</a>"
+    "</div></div>"
+  ));
+
+  webStreamEnd();
+}
+
+
+void handleHistoryPage(){
+  const uint32_t historyPageHeapBefore=ESP.getFreeHeap();
+  Serial.print(F("[WEB HISTORY PAGE] start heap="));
+  Serial.print(historyPageHeapBefore);
+  Serial.print(F(" maxBlock="));
+  Serial.println(ESP.getMaxFreeBlockSize());
+
+  webStreamBegin(F(LTXT_HISTORY));
+  webStreamNav(1);
+
+  server.sendContent(F(
+    "<style>.periods{display:flex;gap:6px;flex-wrap:wrap}.periodBtn{background:#292929;border:1px solid #555;border-radius:999px;padding:7px 11px;color:#eee}.periodBtn.active,.monthYearsBtn.active{background:#1769aa}.monthYearsBtn{background:#292929;border:1px solid #555;border-radius:999px;padding:7px 11px;color:#eee}.chartToggles{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:.82rem;color:#bbb}.chartToggles label{display:flex;align-items:center;gap:4px}.chartToggles input{width:auto;margin:0}"
+    ".chartWrap{height:300px;position:relative}.chart{width:100%;height:100%}.chartTip{position:absolute;display:none;pointer-events:none;min-width:170px;background:#101418;border:1px solid #4d5965;border-radius:9px;padding:8px;box-shadow:0 4px 14px #000;font-size:12px;z-index:5}.legend{display:flex;gap:14px;flex-wrap:wrap;color:#aaa;font-size:.82rem;margin-top:8px}.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px}@media(max-width:700px){.chartWrap{height:240px}}.chartToggles{margin-left:auto;padding:2px 0}.chartToggles label{padding:5px 8px;border:1px solid #3b3b3b;border-radius:999px;background:#202020;cursor:pointer}.chartToggles label.off{opacity:.38;cursor:not-allowed}.chartToggles input:disabled{cursor:not-allowed}.periods{display:flex;gap:6px;flex-wrap:wrap}.periodBtn,.monthYearsBtn{min-height:32px}.muted.compact{margin:5px 0 8px}</style>"
+  ));
+  server.sendContent(F(
+    "<div class='card'><div class='topbar'><h1>" LTXT_HISTORY "</h1><div class='periods'>"
+    "<button class='periodBtn' data-d='183'>" LTXT_HALF_YEAR "</button><button class='periodBtn active' data-d='365'>" LTXT_ONE_YEAR "</button>"
+    "<button class='periodBtn' data-d='1825'>" LTXT_FIVE_YEARS "</button><button class='periodBtn' data-d='3650'>" LTXT_TEN_YEARS "</button></div>"
+    "<div class='chartToggles'><label><input id='histShowTemp' type='checkbox' checked>" LTXT_TEMPERATURE "</label><label><input id='histShowHum' type='checkbox' checked>" LTXT_HUMIDITY_SHORT "</label></div></div>"
+    "<p id='historyLoadStatus' class='muted compact'>" LTXT_HISTORY_LOADING "</p><div class='chartWrap'><canvas id='hc' class='chart'></canvas><div id='histTip' class='chartTip'></div></div>"
+    "<div class='legend'><span><i style='background:#4da6ff'></i>" LTXT_TANK_LEVEL "</span><span><i style='background:#ffb52e'></i>" LTXT_CONSUMPTION "</span><span><i style='background:#42d65b'></i>" LTXT_REFILL "</span><span><i style='background:#ff8a65'></i>" LTXT_TEMPERATURE "</span><span><i style='background:#26c6da'></i>" LTXT_HUMIDITY "</span><span><i style='background:#ffd166'></i>" LTXT_IMPORT "</span><span><i style='background:#ff6b6b'></i>" LTXT_TEST_DATA "</span></div></div>"
+    "<div class='card'><div class='topbar'><h2>" LTXT_MONTHLY_COMPARISON "</h2><div class='periods'>"
+    "<button class='monthYearsBtn' data-y='3'>" LTXT_THREE_YEARS "</button><button class='monthYearsBtn active' data-y='5'>" LTXT_FIVE_YEARS "</button><button class='monthYearsBtn' data-y='10'>" LTXT_TEN_YEARS "</button></div></div>"
+    "<p id='monthlyStatus' class='muted compact'>" LTXT_MONTHLY_LOADING "</p>"
+    "<div class='chartWrap'><canvas id='mc' class='chart'></canvas><div id='monthTip' class='chartTip'></div></div><div id='monthlyLegend' class='legend'></div>"
+    "<div style='overflow-x:auto'><table id='monthlyTable'></table></div></div>"
+    "<div class='card'><h2>" LTXT_STATISTICS "</h2><div class='grid'><div class='metric'>" LTXT_PERIOD "<b id='sd'>--</b></div><div class='metric'>" LTXT_CONSUMPTION "<b id='sc'>-- L</b></div>"
+    "<div class='metric'>" LTXT_REFILLS "<b id='sr'>-- L</b></div><div class='metric'>" LTXT_TANK_LEVEL "<b id='sl'>--</b></div>"
+    "<div class='metric'>" LTXT_OLDEST_DAY "<b id='so'>--</b></div><div class='metric'>" LTXT_NEWEST_DAY "<b id='sn'>--</b></div>"
+  ));
+  server.sendContent(F(
+    "<div class='metric'>" LTXT_DATASET "<b id='sy'>--</b></div></div></div>"
+    "<div class='card'><h2>" LTXT_LATEST_REFILLS LHTML_RECENT_REFILLS_LOADING
+  ));
+  server.sendContent(F(
+    "<div class='card'><h2>" LTXT_DATA "</h2><div class='links'><a class='btn' href='/history/import'>" LTXT_CSV_IMPORT_ACTION "</a><a class='btn' href='/history.csv?days=3650'>" LTXT_CSV_EXPORT_ACTION "</a><a class='btn' href='/history/maintenance'>" LTXT_MAINTENANCE "</a></div></div>"
+    "<div class='card'><h2>" LTXT_TEST_DATA "</h2><div class='links'><form method='POST' action='/generate-test-history'><button type='submit'>" LTXT_ONE_YEAR_TEST "</button></form>"
+    "<form method='POST' action='/generate-test-history-10y'><button type='submit'>" LTXT_TEN_YEARS_TEST "</button></form>"
+    "<form method='POST' action='/clear-history' "
+    "onsubmit=\"return confirm('ACHTUNG: Wirklich die komplette Historie unwiderruflich löschen?');\">"
+    "<p style='color:#ff6b6b'><b>ACHTUNG:</b> Löscht die komplette History dauerhaft.</p>"
+    LHTML_DELETE_CONFIRM_LABEL
+  ));
+  server.sendContent(F(
+    LHTML_DELETE_CONFIRM_INPUT
+    "<button class='danger' type='submit'>" LTXT_HISTORY_DELETE "</button></form></div></div>"
+  ));
+
+  server.sendContent(R"JS(
+<script>
+(function(){
+const $=i=>document.getElementById(i),f=v=>Number.isFinite(Number(v))?Number(v).toFixed(1):'--',T=window.I18N||{};
+let d=365,items=[],climateItems=[],histGeom=null,showTemp=true,showHum=true;
+function updateHistoryClimateToggles(){
+  const has=climateItems.length>0;
+  const t=$('histShowTemp'),h=$('histShowHum');
+  if(t){t.disabled=!has;t.closest('label')?.classList.toggle('off',!has)}
+  if(h){h.disabled=!has;h.closest('label')?.classList.toggle('off',!has)}
+}
+
+const mn=['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+let monthYears=5,monthly=null,monthBars=[];
+
+function dayKeyText(v){
+  const n=Number(v)||0;
+  if(n<10000101)return '--';
+  const y=Math.floor(n/10000),m=Math.floor(n/100)%100,d=n%100;
+  return String(d).padStart(2,'0')+'.'+String(m).padStart(2,'0')+'.'+y;
+}
+function dayKeyDate(v){
+  const n=Number(v)||0;
+  if(n<10000101)return null;
+  const y=Math.floor(n/10000),m=Math.floor(n/100)%100,d=n%100;
+  return new Date(y,m-1,d,12,0,0);
+}
+function dataSpanText(oldest,newest,count){
+  const a=dayKeyDate(oldest),b=dayKeyDate(newest);
+)JS");
+  server.sendContent(R"JS(
+  if(!a||!b||!count)return '--';
+  const days=Math.max(1,Math.round((b-a)/86400000)+1);
+  const years=days/365.2425;
+  if(years>=1)return years.toFixed(1).replace('.',',')+' '+(T.years||'years')+' · '+count+' '+(T.days||'days');
+  if(days>=30)return (days/30.44).toFixed(1).replace('.',',')+' '+(T.months||'months')+' · '+count+' '+(T.days||'days');
+  return days+' '+(T.days||'days');
+}
+
+function draw(){
+  const c=$('hc'),r=c.getBoundingClientRect(),w=Math.max(300,Math.floor(r.width)),h=Math.floor(r.height),z=devicePixelRatio||1;
+  c.width=w*z;c.height=h*z;const x=c.getContext('2d');x.setTransform(z,0,0,z,0,0);x.clearRect(0,0,w,h);
+  if(!items.length){x.fillStyle='#777';x.fillText(T.noData||'No data',20,30);return}
+)JS");
+  server.sendContent(R"JS(
+  const pl=38,pr=showTemp&&climateItems.length?42:8,pt=10,pb=22,iw=w-pl-pr,ih=h-pt-pb,t0=items[0].time,t1=Math.max(t0+86400000,items[items.length-1].time),px=t=>pl+(t-t0)/(t1-t0)*iw,py=v=>pt+ih-Math.max(0,Math.min(100,v))/100*ih;
+  let tMin=0,tMax=40;
+  if(showTemp&&climateItems.length){let mn=999,mx=-999;climateItems.forEach(a=>[a.tMin,a.tAvg,a.tMax].forEach(v=>{v=Number(v);if(Number.isFinite(v)){mn=Math.min(mn,v);mx=Math.max(mx,v)}}));if(mn!==999){if(mx-mn<4){mn-=2;mx+=2}tMin=Math.floor(mn-1);tMax=Math.ceil(mx+1)}}
+  const pyT=v=>pt+ih-(v-tMin)/(tMax-tMin)*ih;
+  x.strokeStyle='#333';[0,25,50,75,100].forEach(v=>{let y=py(v);x.beginPath();x.moveTo(pl,y);x.lineTo(w-pr,y);x.stroke();x.fillStyle='#888';x.font='10px Arial';x.fillText(v+'%',2,y+3)});
+)JS");
+  server.sendContent(R"JS(
+  if(showTemp&&climateItems.length)for(let i=0;i<=4;i++){const y=pt+ih-(i/4)*ih,s=(tMin+(tMax-tMin)*(i/4)).toFixed(0)+'°';x.fillStyle='#ff9d83';x.fillText(s,w-x.measureText(s).width-2,y+3)}
+  const maxC=Math.max(1,...items.map(a=>Number(a.consumedLiters)||0));items.forEach(a=>{const q=px(a.time),bh=((Number(a.consumedLiters)||0)/maxC)*(ih*.30);if(bh>0){x.fillStyle='#ffb52e';x.fillRect(q-1,pt+ih-bh,2,bh)}});
+  x.beginPath();items.forEach((a,i)=>{let q=px(a.time),y=py(a.percent);i?x.lineTo(q,y):x.moveTo(q,y)});x.strokeStyle='#4da6ff';x.lineWidth=2;x.stroke();
+)JS");
+  server.sendContent(R"JS(
+  if(showHum&&climateItems.length){let begun=false;x.beginPath();climateItems.forEach(a=>{const v=Number(a.hAvg);if(!Number.isFinite(v))return;const q=px(a.time),y=py(v);begun?x.lineTo(q,y):x.moveTo(q,y);begun=true});if(begun){x.strokeStyle='#26c6da';x.lineWidth=1.8;x.stroke()}}
+  if(showTemp&&climateItems.length){let begun=false;x.beginPath();climateItems.forEach(a=>{const v=Number(a.tAvg);if(!Number.isFinite(v))return;const q=px(a.time),y=pyT(v);begun?x.lineTo(q,y):x.moveTo(q,y);begun=true});if(begun){x.strokeStyle='#ff8a65';x.lineWidth=1.8;x.stroke()}}
+)JS");
+  server.sendContent(R"JS(
+  items.forEach(a=>{const q=px(a.time),y=py(a.percent),src=Number(a.source)||0;if(src===1){x.strokeStyle='#ffd166';x.lineWidth=1.5;x.beginPath();x.arc(q,y,4,0,Math.PI*2);x.stroke()}else if(src===2){x.fillStyle='#ff6b6b';x.beginPath();x.moveTo(q,y-4);x.lineTo(q+4,y+4);x.lineTo(q-4,y+4);x.closePath();x.fill()}if(Number(a.refillLiters)>0){x.fillStyle='#42d65b';x.beginPath();x.arc(q,pt+ih-5,4,0,Math.PI*2);x.fill()}});
+  histGeom={px:items.map(a=>px(a.time))}
+}
+
+
+const histC=$('hc'),histTip=$('histTip');
+
+function nearestClimate(time){
+  let best=null,bd=43200001;
+  climateItems.forEach(v=>{
+    const dd=Math.abs(Number(v.time)-Number(time));
+    if(dd<bd){bd=dd;best=v}
+  });
+  return (best&&bd<=43200000)?best:null;
+}
+
+function histShowTip(e){
+  if(!histGeom||!items.length)return;
+)JS");
+  server.sendContent(R"JS(
+  const r=histC.getBoundingClientRect(),
+        mx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+
+  let bi=-1,bd=99999;
+  histGeom.px.forEach((q,i)=>{
+    const dd=Math.abs(q-mx);
+    if(dd<bd){bd=dd;bi=i}
+  });
+
+  if(bi<0||bd>28){
+    histTip.style.display='none';
+    return;
+  }
+
+  const a=items[bi],
+        sn=Number(a.source)===1?(T.importText||'Import'):(Number(a.source)===2?(T.testData||'Test'):(T.measured||'Measured')),
+        ci=nearestClimate(a.time);
+
+  let extra='';
+  if(ci){
+    if(showTemp&&Number.isFinite(Number(ci.tAvg))){
+      extra+='<br><span style="color:#ff8a65">'+(T.temperature||'Temperature')+': '+f(ci.tAvg)+' °C</span>';
+    }
+    if(showHum&&Number.isFinite(Number(ci.hAvg))){
+      extra+='<br><span style="color:#26c6da">'+(T.humidity||'Humidity')+': '+f(ci.hAvg)+' %</span>';
+    }
+  }
+
+  histTip.innerHTML=
+)JS");
+  server.sendContent(R"JS(
+    '<b>'+new Date(a.time).toLocaleDateString(window.APP_LOCALE||'de-DE')+'</b>'+
+    '<br>'+(T.tankLevel||'Level')+': '+f(a.percent)+' %'+
+    '<br>'+(T.amount||'Amount')+': '+f(a.liters)+' L'+
+    '<br>'+(T.consumption||'Consumption')+': '+f(a.consumedLiters)+' L'+
+    '<br>'+(T.source||'Source')+': '+sn+
+    (Number(a.refillLiters)>0
+      ?'<br><span style="color:#65e572">'+(T.refill||'Refill')+': +'+f(a.refillLiters)+' L</span>'
+      :'')+
+    extra;
+
+  histTip.style.display='block';
+  histTip.style.left=Math.max(5,Math.min(histC.clientWidth-195,mx+10))+'px';
+  histTip.style.top='8px';
+}
+
+histC.onmousemove=histShowTip;
+histC.ontouchmove=histShowTip;
+histC.onmouseleave=()=>histTip.style.display='none';
+histC.ontouchend=()=>histTip.style.display='none';
+
+async function loadClimate(n){
+  climateItems=[];
+  try{
+    const r=await fetch('/api/history/climate?days='+n+'&x='+Date.now(),{
+      cache:'no-store'
+    });
+)JS");
+  server.sendContent(R"JS(
+    const raw=await r.text();
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const j=JSON.parse(raw);
+    climateItems=j.items||[];
+  }catch(e){
+    climateItems=[];
+  }
+  draw();
+}
+
+async function load(n){
+  d=n;
+
+  document.querySelectorAll('.periodBtn').forEach(b=>{
+    b.classList.toggle('active',Number(b.dataset.d)===d);
+  });
+
+  const st=$('historyLoadStatus');
+  st.textContent=T.loadingHistory||'Loading history …';
+  st.style.color='#888';
+
+  try{
+    const r=await fetch('/api/history?days='+d+'&x='+Date.now(),{
+      cache:'no-store'
+    });
+    const raw=await r.text();
+
+    if(!r.ok)throw new Error('HTTP '+r.status);
+
+    const j=JSON.parse(raw);
+    if(j.ok===false)throw new Error(j.error||'API');
+
+    items=j.items||[];
+    const s=j.stats||{};
+
+    $('sd').textContent=(s.days||0)+' '+(T.days||'days');
+)JS");
+  server.sendContent(R"JS(
+    $('sc').textContent=f(s.consumptionLiters)+' L';
+    $('sr').textContent=f(s.refillLiters)+' L';
+    $('sl').textContent=
+      (s.minPercent==null||s.maxPercent==null)
+        ?'--'
+        :f(s.minPercent)+'–'+f(s.maxPercent)+' %';
+
+    $('so').textContent=dayKeyText(s.oldestDay);
+    $('sn').textContent=dayKeyText(s.newestDay);
+    $('sy').textContent=dataSpanText(
+      s.oldestDay,
+      s.newestDay,
+      s.days||0
+    );
+
+    st.textContent=
+      (T.loaded||'Loaded')+': '+items.length+' '+(T.points||'points')+
+      ' / '+(s.days||0)+' '+(T.days||'days');
+    st.style.color='#65e572';
+
+    draw();
+    await loadClimate(d);
+
+    if(climateItems.length){st.textContent+=' · '+(T.climate||'Climate')+' '+climateItems.length+' '+(T.days||'days');}else{st.textContent+=' · '+(T.noClimateData||'No climate data');}
+  }catch(e){
+    items=[];
+    climateItems=[];
+
+    $('sd').textContent='--';
+)JS");
+  server.sendContent(R"JS(
+    $('sc').textContent='-- L';
+    $('sr').textContent='-- L';
+    $('sl').textContent='--';
+    $('so').textContent='--';
+    $('sn').textContent='--';
+    $('sy').textContent='--';
+
+    st.textContent=(T.error||'Error')+': '+e.message;
+    st.style.color='#ff6565';
+    draw();
+  }
+}
+
+function drawMonthly(){
+  const c=$('mc');if(!c||!monthly)return;
+  const r=c.getBoundingClientRect(),w=Math.max(320,Math.floor(r.width)),h=Math.floor(r.height),z=devicePixelRatio||1;
+  c.width=w*z;c.height=h*z;
+  const x=c.getContext('2d');x.setTransform(z,0,0,z,0,0);x.clearRect(0,0,w,h);
+  const yrs=monthly.years||[],ms=monthly.months||[];let mx=1;
+  ms.forEach(a=>(a||[]).forEach(v=>{if(v!=null&&Number(v)>mx)mx=Number(v)}));
+  const pl=45,pr=10,pt=15,pb=35,iw=w-pl-pr,ih=h-pt-pb;
+  x.strokeStyle='#333';
+)JS");
+  server.sendContent(R"JS(
+  for(let g=0;g<=4;g++){let yy=pt+ih-g*ih/4;x.beginPath();x.moveTo(pl,yy);x.lineTo(w-pr,yy);x.stroke();x.fillStyle='#888';x.font='10px Arial';x.fillText(Math.round(mx*g/4)+'L',2,yy+3)}
+  const group=iw/12,bw=Math.max(2,Math.min(12,(group-4)/Math.max(1,yrs.length)));monthBars=[];
+  ms.forEach((a,m)=>{
+    (a||[]).forEach((v,yi)=>{
+      if(v==null)return;
+      const val=Number(v)||0,q=pl+m*group+2+yi*bw,bh=val/mx*ih,hh=(yi*67)%360;
+      x.fillStyle='hsl('+hh+' 65% 55%)';x.fillRect(q,pt+ih-bh,Math.max(1,bw-1),bh);
+      monthBars.push({x:q,w:Math.max(1,bw-1),top:pt+ih-bh,bottom:pt+ih,month:m,year:yrs[yi],value:val});
+    });
+    x.fillStyle='#aaa';x.font='10px Arial';x.fillText(mn[m],pl+m*group+2,h-8)
+  });
+)JS");
+  server.sendContent(R"JS(
+  let lg='';yrs.forEach((y,yi)=>{lg+='<span><i style="background:hsl('+((yi*67)%360)+' 65% 55%)"></i>'+y+'</span>'});$('monthlyLegend').innerHTML=lg;
+  let t='<tr><th>Monat</th>';yrs.forEach(y=>t+='<th>'+y+'</th>');t+='</tr>';
+  ms.forEach((a,m)=>{t+='<tr><td>'+mn[m]+'</td>';yrs.forEach((y,yi)=>{let v=a?a[yi]:null;t+='<td>'+(v==null?'–':Math.round(v)+' L')+'</td>'});t+='</tr>'});
+  $('monthlyTable').innerHTML=t
+}
+
+const monC=$('mc'),monTip=$('monthTip');
+function monthShowTip(e){
+  const r=monC.getBoundingClientRect(),mx=(e.touches?e.touches[0].clientX:e.clientX)-r.left,my=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  let b=monthBars.find(q=>mx>=q.x-2&&mx<=q.x+q.w+2&&my>=q.top-3&&my<=q.bottom+3);
+  if(!b){monTip.style.display='none';return}
+)JS");
+  server.sendContent(R"JS(
+  monTip.innerHTML='<b>'+mn[b.month]+' '+b.year+'</b><br>Verbrauch: '+Math.round(b.value)+' L';
+  monTip.style.display='block';monTip.style.left=Math.max(5,Math.min(monC.clientWidth-175,mx+10))+'px';monTip.style.top='8px'
+}
+monC.onmousemove=monthShowTip;monC.ontouchmove=monthShowTip;monC.onmouseleave=()=>monTip.style.display='none';monC.ontouchend=()=>monTip.style.display='none';
+
+async function loadMonthly(y){
+  monthYears=y;document.querySelectorAll('.monthYearsBtn').forEach(b=>b.classList.toggle('active',Number(b.dataset.y)===monthYears));
+  const st=$('monthlyStatus');st.textContent=T.loadingMonthly||'Loading monthly comparison …';
+  try{
+    let r=await fetch('/api/monthly-comparison?years='+monthYears+'&x='+Date.now(),{cache:'no-store'});
+    let raw=await r.text();if(!r.ok)throw new Error('HTTP '+r.status);
+)JS");
+  server.sendContent(R"JS(
+    let j=JSON.parse(raw);if(j.ok===false)throw new Error(j.error||'API');
+    monthly=j;st.textContent='Vergleich '+(j.firstYear||'')+'–'+(j.currentYear||'');st.style.color='#65e572';drawMonthly()
+  }catch(e){monthly=null;st.textContent=(T.error||'Error')+': '+e.message;st.style.color='#ff6565'}
+}
+
+async function loadRefills(){
+  const b=$('recentRefills');
+  try{
+    let r=await fetch('/api/recent-refills?x='+Date.now(),{cache:'no-store'});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    let j=await r.json(),a=j.items||[];
+    if(!a.length){b.innerHTML='<span class="muted">'+(T.noRefills||'No confirmed refills available.')+'</span>';return}
+    let h='<table><tr><th>'+(T.date||'Date')+'</th><th>'+(T.amount||'Amount')+'</th><th>After</th></tr>';
+)JS");
+  server.sendContent(R"JS(
+    a.forEach(v=>{h+='<tr><td>'+v.date+'</td><td>+'+f(v.liters)+' L</td><td>'+f(v.percent)+' %</td></tr>'});h+='</table>';b.innerHTML=h
+  }catch(e){b.textContent=T.refillLoadError||'Refills could not be loaded.'}
+}
+
+document.querySelectorAll('.periodBtn').forEach(b=>b.onclick=()=>load(Number(b.dataset.d)));
+$('histShowTemp').onchange=e=>{showTemp=!!e.target.checked;draw()};
+$('histShowHum').onchange=e=>{showHum=!!e.target.checked;draw()};
+document.querySelectorAll('.monthYearsBtn').forEach(b=>b.onclick=()=>loadMonthly(Number(b.dataset.y)));
+updateHistoryClimateToggles();
+
+async function initHistoryPage(){
+  await load(365);
+  await loadMonthly(5);
+  await loadRefills();
+}
+initHistoryPage();
+addEventListener('resize',()=>{draw();drawMonthly()});
+})();
+</script>
+)JS");
+
+  webStreamEnd();
+
+  Serial.print(F("[WEB HISTORY PAGE] end heap="));
+  Serial.print(ESP.getFreeHeap());
+  Serial.print(F(" maxBlock="));
+  Serial.print(ESP.getMaxFreeBlockSize());
+  Serial.print(F(" delta="));
+  Serial.println((int32_t)ESP.getFreeHeap()-(int32_t)historyPageHeapBefore);
+}
+
+
+// -----------------------------------------------------------------------------
+// WIFI / AP
